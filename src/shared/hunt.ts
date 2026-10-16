@@ -88,3 +88,34 @@ export type Room = {
 
 /** A laser stroke or circle a player drew, in canvas space, judged on pointer-up. */
 export type Circle = { points: ReadonlyArray<readonly [number, number]> };
+
+/** What the host sees of the board when it hides targets. Built by the driver from scene reads. */
+export type BoardItem = {
+    rect: Rect;
+    kind: "freedraw" | "shape" | "text" | "image" | "line" | "other";
+    strokeColor?: string;
+    strokeWidth?: number;
+    /** Freedraw points in canvas space, thinned. Present only for freedraw. */
+    points?: ReadonlyArray<readonly [number, number]>;
+};
+
+export type BoardSnapshot = { frameRect: Rect; items: BoardItem[] };
+
+export type PlantRequest = {
+    roundId: string;
+    seed: number;
+    /** 1 is easiest. Raises clutter preference and shrinks stamps. */
+    difficulty: number;
+    count: number;
+    board: BoardSnapshot;
+    stampIds: string[];
+};
+
+/**
+ * Pure and deterministic for a given request. Lives in src/shared/placement.ts so the
+ * driver's offline host and the room backend's plant tasks run the same code.
+ */
+export type PlantFn = (req: PlantRequest) => Target[];
+
+/** Pure. A target counts as found when the circle encloses its centre and is not absurdly large. */
+export type JudgeFn = (circle: Circle, target: Target) => boolean;
