@@ -1,3 +1,4 @@
+import type { Draft } from "@earendil-works/chord";
 import { createModels } from "@earendil-works/pi-ai/models";
 import {
   createRegistry,
@@ -8,12 +9,14 @@ import {
   type HarnessOptions,
 } from "@earendil-works/pi-durable";
 import type { PlantRequest, Room } from "../../src/shared/hunt.ts";
-import { plant } from "./placement.ts";
-import { type ClaimResult, readyNext, type StartResult } from "./rules.ts";
+import { plant } from "../../src/shared/placement.ts";
+import type { CommandType, ResultCode } from "../../src/shared/protocol.ts";
+import { plantFinished } from "../../src/shared/rules.ts";
 
-export type OpenRoom = { tokenHash: string; room: Room };
+/** `revision` orders snapshots; `taunt` is the line for the change that produced this revision. */
+export type OpenRoom = { tokenHash: string; revision: number; taunt: string | null; room: Room };
 
-/** The room's whole durable state. `open` is null until the room is created. */
+/** The room's whole durable state. `open` is null until the first hello creates the room. */
 export const HuntDoc = defineDoc<{ open: OpenRoom | null }>({
   kind: "app.hunt",
   version: 1,
@@ -21,8 +24,12 @@ export const HuntDoc = defineDoc<{ open: OpenRoom | null }>({
   initial: () => ({ open: null }),
 });
 
-/** `key` fingerprints what the requestId was first used for, so a reuse for anything else is refused. */
-export type Receipt = { key: string; result: StartResult | ClaimResult };
+export type Receipt = {
+  fingerprint: string;
+  command: CommandType;
+  code: ResultCode;
+  revision: number;
+};
 
 export const HuntReceipts = defineDocFamily<{ receipt?: Receipt }, null>({
   family: true,
@@ -32,7 +39,22 @@ export const HuntReceipts = defineDocFamily<{ receipt?: Receipt }, null>({
   initial: () => ({}),
 });
 
-/** Plants the next round while the current one plays. `plant` is pure, so a rerun after eviction lands the same targets. */
+/** A receipt belongs to one player, so two players can use the same requestId. */
+export const receiptKey = (playerId: string, requestId: string): string =>
+  JSON.stringify([playerId, requestId]);
+
+/** A plain copy of a draft or snapshot, safe to keep after its commit settles. */
+export const plain = <T>(value: Draft<T> | Readonly<T>): T => JSON.parse(JSON.stringify(value));
+
+/** Commits a new room state: one revision per public change, carrying that change's taunt. */
+export function publish(open: Draft<OpenRoom>, before: Room, after: Room, taunt: string | null): void {
+  if (after === before) return;
+  open.room = after;
+  open.revision += 1;
+  open.taunt = taunt;
+}
+
+/** `plant` is pure, so a rerun after eviction lands the same targets. */
 export const PlantNextRound = defineTask<PlantRequest, { phase: "plant" }, null>({
   name: "app.plant-next-round",
   version: 1,
@@ -43,7 +65,8 @@ export const PlantNextRound = defineTask<PlantRequest, { phase: "plant" }, null>
       await runtime.commit(async (tx) => {
         const doc = await tx.doc(HuntDoc);
         if (doc.open !== null) {
-          doc.open.room = readyNext(doc.open.room, task.input.roundId, targets);
+          const before = plain<Room>(doc.open.room);
+          publish(doc.open, before, plantFinished(before, task.input.roundId, targets), null);
         }
         return { status: "terminal", outcome: { status: "completed", result: null } };
       }, context);

@@ -1,48 +1,61 @@
 import { DurableObject } from "cloudflare:workers";
-import type { Draft } from "@earendil-works/chord";
-import type { Room as RoomState } from "../../src/shared/hunt.ts";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { Harness, ROOT_CONVERSATION_ID, type TaskId, type Tx } from "@earendil-works/pi-durable";
+import { Harness, ROOT_CONVERSATION_ID, type TaskId } from "@earendil-works/pi-durable";
 import { openDurableObjectSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/cloudflare";
+import type { Room as RoomState } from "../../src/shared/hunt.ts";
+import {
+  type ClientMessage,
+  type Command,
+  commandFingerprint,
+  encode,
+  type FaultCode,
+  type Hello,
+  MAX_DIFFICULTY,
+  MAX_FRAME_CHARS,
+  parseClient,
+  type Player,
+  PROTOCOL_VERSION,
+  ProtocolError,
+  type ResultCode,
+  roundDurationMs,
+  type ServerMessage,
+  type Snapshot,
+  toWire,
+} from "../../src/shared/protocol.ts";
+import { expireRound, joinRoom, openRoom, reduce, roundDeadline } from "../../src/shared/rules.ts";
+import { STAMP_PACK } from "../../src/stamp-pack.ts";
 import {
   HuntDoc,
   huntHarnessOptions,
   HuntReceipts,
   type OpenRoom,
   PlantNextRound,
-  type Receipt,
+  plain,
+  publish,
+  receiptKey,
 } from "./durable.ts";
-import {
-  type ClientMessage,
-  type ErrorCode,
-  InvalidMessage,
-  MAX_MESSAGE_CHARACTERS,
-  parseClientMessage,
-  type ServerMessage,
-} from "./messages.ts";
-import {
-  claimFind,
-  type EndedRound,
-  endDueRound,
-  newRoom,
-  type Player,
-  roomView,
-  roundDeadline,
-  startRound,
-} from "./rules.ts";
 import { KeyedSerialQueue } from "./serial.ts";
-import { selectTauntHost, type TauntHost, type TauntMoment } from "./taunts.ts";
+import { momentOf, selectTauntHost, type TauntHost } from "./taunts.ts";
 
 const context = BACKGROUND_CONTEXT;
 const RECOVERY_ALARM_DELAY_MS = 60_000;
-const RATE_LIMIT = { messages: 20, windowMs: 1_000 };
+/** No round can end sooner than this after it starts, so an alarm pre-armed this far ahead is never late. */
+const EARLIEST_DEADLINE_MS = roundDurationMs(MAX_DIFFICULTY);
+const RATE_LIMIT = { perSecond: 10, burst: 20, retryAfterMs: 1_000 };
+const MAX_PLAYERS_ONLINE = 32;
+const STAMP_IDS = STAMP_PACK.map((stamp) => stamp.id);
+const ROOM_PATH = /^\/rooms\/([A-Za-z0-9:_-]{1,128})\/?$/;
 
-type ConnectionState = { player?: Player };
+/** The room id in a socket path, in the same shape protocol ids take. */
+export const roomIdFromPath = (pathname: string): string | null =>
+  ROOM_PATH.exec(pathname)?.[1] ?? null;
 
-type Applied = { room: RoomState; result: Receipt["result"]; moments: TauntMoment[] };
+type ConnectionState = { roomId: string; player?: Player };
 
-/** A plain copy of a draft, safe to keep after its commit settles. */
-const plain = <T>(draft: Draft<T>): T => JSON.parse(JSON.stringify(draft));
+type CommandOutcome =
+  | { kind: "applied"; code: ResultCode; revision: number }
+  | { kind: "replayed"; code: ResultCode; revision: number; open: OpenRoom }
+  | { kind: "conflict"; revision: number };
 
 const reportError = (
   message: string,
@@ -70,34 +83,23 @@ const reciprocateClose = (socket: WebSocket, code: number, reason: string): void
   }
 };
 
-const playerOf = (socket: WebSocket): Player | undefined => {
-  const state: ConnectionState | null = socket.deserializeAttachment();
-  return state?.player;
-};
-
-const requestKey = (...parts: string[]): string => JSON.stringify(parts);
+const connectionState = (socket: WebSocket): ConnectionState => socket.deserializeAttachment();
 
 const randomSeed = (): number => crypto.getRandomValues(new Uint32Array(1))[0]!;
 
-export const sha256Hex = async (value: string): Promise<string> => {
+const sha256Hex = async (value: string): Promise<string> => {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 };
 
-const randomToken = (): string => {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  return btoa(String.fromCharCode(...bytes))
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/u, "");
-};
-
-const roundEndMoment = (round: EndedRound): TauntMoment => ({
-  kind: "round-end",
-  roundId: round.id,
-  reason: round.reason,
-  found: round.finds.length,
-  total: round.targets.length,
+const snapshot = (open: OpenRoom, self: string, taunt: string | null): Snapshot => ({
+  v: PROTOCOL_VERSION,
+  type: "snapshot",
+  revision: open.revision,
+  serverNow: Date.now(),
+  self,
+  room: toWire(open.room),
+  taunt,
 });
 
 /** One hunt room: its rounds, league and difficulty, and the players connected to it. */
@@ -105,7 +107,7 @@ export class Room extends DurableObject<Env> {
   #harness!: Harness;
   readonly #taunts: TauntHost;
   readonly #operations = new KeyedSerialQueue<WebSocket>();
-  readonly #rates = new WeakMap<WebSocket, { start: number; count: number }>();
+  readonly #buckets = new WeakMap<WebSocket, { tokens: number; at: number }>();
   readonly #alarmTaskWatches = new Set<TaskId>();
   #alarmUpdate: Promise<void> = Promise.resolve();
 
@@ -135,9 +137,10 @@ export class Room extends DurableObject<Env> {
         for (const change of publication.changes) {
           if (change.type !== "document" || change.record.kind !== HuntDoc.definition.kind) continue;
           const open = (change.value as { open: OpenRoom | null } | null)?.open ?? null;
-          if (open !== null) this.#broadcast({ type: "room", room: roomView(open.room) });
+          if (open !== null) this.#broadcast(open);
         }
       });
+      await this.#expireOverdueRound();
       await this.#refreshAlarm();
     } catch (error) {
       await harness.close(context);
@@ -145,69 +148,43 @@ export class Room extends DurableObject<Env> {
     }
   }
 
-  async create(roomId: string): Promise<{ token: string }> {
-    const token = randomToken();
-    const tokenHash = await sha256Hex(token);
-    // Plant tasks belong to a conversation, so the root one must exist.
-    await this.#harness.root(context);
-    await this.#harness.commit(async (tx) => {
-      const doc = await tx.doc(HuntDoc);
-      if (doc.open !== null) throw new Error(`Room ${roomId} already exists`);
-      doc.open = { tokenHash, room: newRoom(roomId) };
-    }, context);
-    return { token };
-  }
-
   override async fetch(request: Request): Promise<Response> {
-    if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
-      return Response.json({ error: "WebSocket upgrade required" }, { status: 426 });
+    const roomId = roomIdFromPath(new URL(request.url).pathname);
+    if (roomId === null || request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
+      return Response.json({ error: "WebSocket upgrade to /rooms/<roomId> required" }, { status: 426 });
     }
     const pair = new WebSocketPair();
     this.ctx.acceptWebSocket(pair[1]);
-    pair[1].serializeAttachment({} satisfies ConnectionState);
+    pair[1].serializeAttachment({ roomId } satisfies ConnectionState);
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
 
   override async alarm(): Promise<void> {
-    const ended = await this.#harness.commit(async (tx) => {
-      const doc = await tx.doc(HuntDoc);
-      if (doc.open === null) return null;
-      const step = endDueRound(plain(doc.open.room), Date.now());
-      if (step === null) return null;
-      doc.open.room = step.room;
-      return step.ended;
-    }, context);
+    await this.#expireOverdueRound();
     await this.#refreshAlarm();
-    if (ended !== null) await this.#announce([roundEndMoment(ended)]);
   }
 
   override async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): Promise<void> {
     if (!this.#withinRate(socket)) {
-      return this.#refuse(socket, "rate-limited", "Too many messages", 1008);
+      return this.#fault(socket, "rate-limit", 1008, RATE_LIMIT.retryAfterMs);
     }
-    if (typeof message !== "string") {
-      return this.#refuse(socket, "invalid-message", "Binary messages are not supported", 1003);
-    }
-    if (message.length > MAX_MESSAGE_CHARACTERS) {
-      return this.#refuse(socket, "too-large", "Message exceeds the size limit", 1009);
-    }
+    if (typeof message !== "string") return this.#fault(socket, "invalid", 1003);
+    if (message.length > MAX_FRAME_CHARS) return this.#fault(socket, "invalid", 1009);
     let parsed: ClientMessage;
     try {
-      parsed = parseClientMessage(message);
+      parsed = parseClient(message);
     } catch (error) {
-      if (!(error instanceof InvalidMessage)) throw error;
-      return this.#refuse(socket, "invalid-message", error.message, 1002);
+      if (!(error instanceof ProtocolError)) throw error;
+      return this.#fault(socket, error.code, 1002);
     }
     try {
-      await this.#operations.run(socket, () => this.#handle(socket, parsed));
+      await this.#operations.run(socket, () =>
+        parsed.type === "hello" ? this.#hello(socket, parsed) : this.#command(socket, parsed),
+      );
     } catch (error) {
+      // Never acknowledge a failed commit. The client replays and its receipt tells whether the commit happened.
       reportError("Room message failed", error, { type: parsed.type });
-      this.#send(socket, {
-        type: "error",
-        code: "command-failed",
-        message: error instanceof Error ? error.message : "Command failed",
-        ...("requestId" in parsed ? { requestId: parsed.requestId } : {}),
-      });
+      this.#fault(socket, "unavailable", 1011, RATE_LIMIT.retryAfterMs);
     }
   }
 
@@ -219,148 +196,154 @@ export class Room extends DurableObject<Env> {
     reportError("Room WebSocket failed", error);
   }
 
-  async #handle(socket: WebSocket, message: ClientMessage): Promise<void> {
-    if (message.type === "join") return this.#join(socket, message.token, message.player);
-    const player = playerOf(socket);
-    if (player === undefined) return this.#refuse(socket, "not-joined", "Join the room first", 1008);
-    switch (message.type) {
-      case "round.start": {
-        const seeds = {
-          now: Date.now(),
-          current: { id: crypto.randomUUID(), seed: randomSeed() },
-          next: { id: crypto.randomUUID(), seed: randomSeed() },
-        };
-        return this.#applyOnce(
-          socket,
-          message.requestId,
-          requestKey(message.type, player.id),
-          async (room, tx) => {
-            const step = startRound(room, { board: message.board, stampIds: message.stampIds }, seeds);
-            if (step.kind !== "started") return { room, result: step, moments: [] };
-            await tx.createTask(PlantNextRound, step.plantNext, {
-              ownership: { kind: "conversation" },
-              conversationId: ROOT_CONVERSATION_ID,
-              background: true,
-            });
-            return {
-              room: step.room,
-              result: { kind: "started", roundId: step.round.id },
-              moments: [{ kind: "round-start", roundId: step.round.id, difficulty: step.room.difficulty }],
-            };
-          },
-        );
+  /** The first valid hello to an empty room creates it and keeps the token's hash. Later hellos must match it. */
+  async #hello(socket: WebSocket, hello: Hello): Promise<void> {
+    const state = connectionState(socket);
+    if (state.player !== undefined) return this.#fault(socket, "invalid", 1002);
+    if (hello.roomId !== state.roomId) return this.#fault(socket, "auth", 1008);
+    if (this.#players().length >= MAX_PLAYERS_ONLINE) {
+      return this.#fault(socket, "full", 1008, RECOVERY_ALARM_DELAY_MS);
+    }
+    const tokenHash = await sha256Hex(hello.joinToken);
+    const now = Date.now();
+    // Plant tasks belong to a conversation, so the root one must exist.
+    await this.#harness.root(context);
+    const open = await this.#harness.commit(async (tx) => {
+      const doc = await tx.doc(HuntDoc);
+      if (doc.open === null) {
+        doc.open = { tokenHash, revision: 0, taunt: null, room: openRoom(hello.roomId) };
+      } else if (doc.open.tokenHash !== tokenHash) {
+        return null;
       }
-      case "find.claim":
-        return this.#applyOnce(
-          socket,
-          message.requestId,
-          requestKey(message.type, player.id, message.roundId, message.targetId),
-          (room) => {
-            const step = claimFind(room, { ...message, player }, Date.now());
-            const moments: TauntMoment[] = [];
-            if (step.result.kind === "found") {
-              moments.push({ kind: "find", roundId: message.roundId, find: step.result.find });
-            }
-            if (step.ended !== null) moments.push(roundEndMoment(step.ended));
-            return { room: step.room, result: step.result, moments };
-          },
-        );
-    }
-  }
+      const before = plain<RoomState>(doc.open.room);
+      const after = joinRoom(expireRound(before, now), hello.player);
+      publish(doc.open, before, after, this.#tauntFor(before, after));
+      return plain<OpenRoom>(doc.open);
+    }, context);
+    if (open === null) return this.#fault(socket, "auth", 1008);
 
-  async #join(socket: WebSocket, token: string, player: Player): Promise<void> {
-    const open = (await this.#harness.snapshot(HuntDoc, context))?.open ?? null;
-    if (open === null) return this.#refuse(socket, "room-not-found", "No such room", 1008);
-    if ((await sha256Hex(token)) !== open.tokenHash) {
-      return this.#refuse(socket, "bad-token", "Wrong join token", 1008);
-    }
-    socket.serializeAttachment({ player } satisfies ConnectionState);
-    this.#send(socket, { type: "joined", player, room: roomView(open.room) });
+    socket.serializeAttachment({ ...state, player: hello.player } satisfies ConnectionState);
+    this.#send(socket, snapshot(open, hello.player.playerId, null));
+    await this.#refreshAlarm();
   }
 
   /**
-   * Applies a command once per requestId. A retry gets the stored result back and changes nothing, the receipt
-   * pattern from pi-durable-cloudflare's conversation commands.
+   * Runs one command once per (player, requestId). An overdue round ends first, then the receipt is checked, so a
+   * claim that won before the deadline still replays its "ok" afterwards.
    */
-  async #applyOnce(
-    socket: WebSocket,
-    requestId: string,
-    key: string,
-    apply: (room: RoomState, tx: Tx) => Applied | Promise<Applied>,
-  ): Promise<void> {
-    const outcome = await this.#harness.commit(async (tx) => {
-      const doc = await tx.doc(HuntReceipts, requestId, null);
-      if (doc.receipt !== undefined) {
-        return doc.receipt.key === key
-          ? { kind: "replayed" as const, result: doc.receipt.result }
-          : { kind: "reused" as const };
+  async #command(socket: WebSocket, command: Command): Promise<void> {
+    const player = connectionState(socket).player;
+    if (player === undefined) return this.#fault(socket, "auth", 1008);
+    const now = Date.now();
+    if (command.type === "round.start" || command.type === "board.offer") {
+      await this.#setAlarmNoLaterThan(now + EARLIEST_DEADLINE_MS);
+    }
+    const rules = {
+      now,
+      fresh: { roundId: crypto.randomUUID(), seed: randomSeed() },
+      stampIds: STAMP_IDS,
+    };
+    const fingerprint = commandFingerprint(command);
+
+    const outcome = await this.#harness.commit(async (tx): Promise<CommandOutcome> => {
+      const doc = await tx.doc(HuntDoc);
+      if (doc.open === null) throw new Error("The room does not exist");
+      const before = plain<RoomState>(doc.open.room);
+      const reconciled = expireRound(before, now);
+      const receipts = await tx.doc(HuntReceipts, receiptKey(player.playerId, command.requestId), null);
+      const stored = receipts.receipt;
+      if (stored !== undefined) {
+        publish(doc.open, before, reconciled, this.#tauntFor(before, reconciled));
+        return stored.fingerprint === fingerprint
+          ? { kind: "replayed", code: stored.code, revision: stored.revision, open: plain<OpenRoom>(doc.open) }
+          : { kind: "conflict", revision: doc.open.revision };
       }
-      const hunt = await tx.doc(HuntDoc);
-      if (hunt.open === null) throw new Error("The room does not exist");
-      const room = plain(hunt.open.room);
-      const applied = await apply(room, tx);
-      if (applied.room !== room) hunt.open.room = applied.room;
-      doc.receipt = { key, result: applied.result };
-      return { kind: "applied" as const, ...applied };
+      const step = reduce(reconciled, command, player, rules);
+      publish(doc.open, before, step.room, this.#tauntFor(before, step.room));
+      if (step.plant !== null) {
+        await tx.createTask(PlantNextRound, step.plant, {
+          ownership: { kind: "conversation" },
+          conversationId: ROOT_CONVERSATION_ID,
+          background: true,
+        });
+      }
+      receipts.receipt = { fingerprint, command: command.type, code: step.code, revision: doc.open.revision };
+      return { kind: "applied", code: step.code, revision: doc.open.revision };
     }, context);
 
-    if (outcome.kind === "reused") {
-      this.#send(socket, {
-        type: "error",
-        code: "request-reused",
-        message: `Request ${requestId} was already used for another command`,
-        requestId,
-      });
-      return;
-    }
-    this.#send(socket, { type: "result", requestId, result: outcome.result });
-    if (outcome.kind === "applied") {
-      await this.#refreshAlarm();
-      await this.#announce(outcome.moments);
-    }
+    // A replayed result carries its original revision, so send the current state beside it.
+    if (outcome.kind === "replayed") this.#send(socket, snapshot(outcome.open, player.playerId, null));
+    this.#send(socket, {
+      v: PROTOCOL_VERSION,
+      type: "result",
+      requestId: command.requestId,
+      command: command.type,
+      code: outcome.kind === "conflict" ? "request-conflict" : outcome.code,
+      revision: outcome.revision,
+    });
+    await this.#refreshAlarm();
   }
 
-  async #announce(moments: readonly TauntMoment[]): Promise<void> {
-    for (const moment of moments) {
-      this.#broadcast({ type: "taunt", moment: moment.kind, text: await this.#taunts(moment) });
-    }
+  async #expireOverdueRound(): Promise<void> {
+    const open = (await this.#harness.snapshot(HuntDoc, context))?.open ?? null;
+    if (open === null || roundDeadline(open.room) === undefined) return;
+    const now = Date.now();
+    await this.#harness.commit(async (tx) => {
+      const doc = await tx.doc(HuntDoc);
+      if (doc.open === null) return;
+      const before = plain<RoomState>(doc.open.room);
+      const after = expireRound(before, now);
+      publish(doc.open, before, after, this.#tauntFor(before, after));
+    }, context);
+  }
+
+  #tauntFor(before: RoomState, after: RoomState): string | null {
+    const moment = momentOf(before, after);
+    return moment === null ? null : this.#taunts(moment);
   }
 
   #withinRate(socket: WebSocket): boolean {
     const now = Date.now();
-    const window = this.#rates.get(socket);
-    if (window === undefined || now - window.start >= RATE_LIMIT.windowMs) {
-      this.#rates.set(socket, { start: now, count: 1 });
-      return true;
-    }
-    window.count++;
-    return window.count <= RATE_LIMIT.messages;
+    const bucket = this.#buckets.get(socket) ?? { tokens: RATE_LIMIT.burst, at: now };
+    bucket.tokens = Math.min(
+      RATE_LIMIT.burst,
+      bucket.tokens + ((now - bucket.at) / 1_000) * RATE_LIMIT.perSecond,
+    );
+    bucket.at = now;
+    this.#buckets.set(socket, bucket);
+    if (bucket.tokens < 1) return false;
+    bucket.tokens -= 1;
+    return true;
   }
 
-  #refuse(socket: WebSocket, code: ErrorCode, message: string, closeCode: number): void {
-    this.#send(socket, { type: "error", code, message });
+  #fault(socket: WebSocket, code: FaultCode, closeCode: number, retryAfterMs = 0): void {
+    this.#send(socket, { v: PROTOCOL_VERSION, type: "fault", code, retryAfterMs });
     try {
-      socket.close(closeCode, message);
+      socket.close(closeCode, code);
     } catch {
       // The socket may already have closed.
     }
   }
 
-  #broadcast(message: ServerMessage): void {
-    const text = JSON.stringify(message);
-    for (const socket of this.ctx.getWebSockets()) {
-      if (playerOf(socket) !== undefined) this.#sendText(socket, text);
+  #players(): Array<{ socket: WebSocket; player: Player }> {
+    return this.ctx.getWebSockets().flatMap((socket) => {
+      const player = connectionState(socket).player;
+      return player === undefined || socket.readyState !== WebSocket.READY_STATE_OPEN
+        ? []
+        : [{ socket, player }];
+    });
+  }
+
+  #broadcast(open: OpenRoom): void {
+    for (const { socket, player } of this.#players()) {
+      this.#send(socket, snapshot(open, player.playerId, open.taunt));
     }
   }
 
   #send(socket: WebSocket, message: ServerMessage): void {
-    this.#sendText(socket, JSON.stringify(message));
-  }
-
-  #sendText(socket: WebSocket, text: string): void {
     if (socket.readyState !== WebSocket.READY_STATE_OPEN) return;
     try {
-      socket.send(text);
+      socket.send(encode(message));
     } catch {
       try {
         socket.close(1011, "Unexpected send error");
@@ -370,7 +353,7 @@ export class Room extends DurableObject<Env> {
     }
   }
 
-  /** One alarm serves both the live round's deadline and the harness's recovery of unfinished tasks. */
+  /** One alarm serves the live round's deadline and the harness's recovery of unfinished tasks. */
   #refreshAlarm(): Promise<void> {
     return this.#serializeAlarmUpdate(async () => {
       const { tasks } = await this.#harness.inspect(context);
@@ -390,6 +373,15 @@ export class Room extends DurableObject<Env> {
       // waitForTask starts the scheduler, so persist its recovery alarm first.
       for (const taskId of tasksToResume) this.#refreshAlarmWhenTaskSettles(taskId);
     });
+  }
+
+  #setAlarmNoLaterThan(timestamp: number): Promise<void> {
+    return this.#serializeAlarmUpdate(() =>
+      this.ctx.storage.transaction(async (transaction) => {
+        const current = await transaction.getAlarm();
+        if (current === null || timestamp < current) await transaction.setAlarm(timestamp);
+      }),
+    );
   }
 
   #serializeAlarmUpdate(operation: () => Promise<void>): Promise<void> {

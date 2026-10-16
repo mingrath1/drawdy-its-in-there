@@ -1,262 +1,336 @@
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MAX_MESSAGE_CHARACTERS } from "../src/messages.ts";
-import { MAX_DIFFICULTY, targetCount } from "../src/rules.ts";
+import { MAX_FRAME_CHARS, roundDurationMs, targetCount } from "../../src/shared/protocol.ts";
 import {
   alice,
+  board,
   bob,
   claim,
+  command,
   connect,
-  createRoom,
-  errorCoded,
-  joinedClient,
+  faultCoded,
+  joined,
+  type LiveRound,
+  requestId,
   resultFor,
-  roomWhere,
-  startRound,
+  roomKeys,
+  snapshotWhere,
+  startLive,
 } from "./helpers.ts";
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
+const isEnded = snapshotWhere((room) => room.current?.status === "ended");
+
 describe("room access", () => {
-  it("creates a room and admits a player with its token over a null-origin socket", async () => {
-    const room = await createRoom();
-    expect(room.token.length).toBeGreaterThanOrEqual(32);
+  it("creates the room on the first hello over a null-origin socket", async () => {
+    const keys = roomKeys();
+    const { client, first } = await joined(keys, alice);
 
-    const { client, view } = await joinedClient(room, alice);
-
-    expect(view).toMatchObject({
-      roomId: room.roomId,
-      difficulty: 1,
-      league: [],
-      current: null,
-      next: null,
-      roundsPlayed: 0,
+    expect(first).toMatchObject({
+      self: "alice",
+      taunt: null,
+      room: {
+        roomId: keys.roomId,
+        difficulty: 1,
+        league: [{ playerId: "alice", playerName: "Alice", finds: 0, roundsWon: 0 }],
+        current: null,
+        next: null,
+        roundsPlayed: 0,
+      },
     });
     client.close();
   });
 
-  it("refuses a wrong token and closes the socket", async () => {
-    const room = await createRoom();
-    const client = await connect(room.roomId);
-    client.send({ type: "join", token: `${room.token}x`, player: alice });
+  it("admits a second player with the same token and refuses a different one", async () => {
+    const keys = roomKeys();
+    const { client: a } = await joined(keys, alice);
+    const { client: b, first } = await joined(keys, bob);
+    expect(first.room.league.map(({ playerId }) => playerId)).toEqual(["alice", "bob"]);
 
-    await client.waitFor(errorCoded("bad-token"));
+    const intruder = await connect(keys.roomId);
+    intruder.send({ v: 1, type: "hello", roomId: keys.roomId, joinToken: roomKeys().joinToken, player: bob });
+    await intruder.waitFor(faultCoded("auth"));
+    expect((await intruder.closed).code).toBe(1008);
+    a.close();
+    b.close();
+  });
+
+  it("refuses a hello whose room id differs from the socket's path", async () => {
+    const keys = roomKeys();
+    const client = await connect(keys.roomId);
+    client.send({ v: 1, type: "hello", roomId: roomKeys().roomId, joinToken: keys.joinToken, player: alice });
+
+    await client.waitFor(faultCoded("auth"));
     expect((await client.closed).code).toBe(1008);
   });
 
-  it("refuses a token for a room that was never created", async () => {
-    const client = await connect(crypto.randomUUID());
-    client.send({ type: "join", token: "anything", player: alice });
+  it("refuses commands before hello", async () => {
+    const client = await connect(roomKeys().roomId);
+    client.send({ v: 1, type: "find.claim", requestId: "r1", roundId: "x", targetId: "y" });
 
-    await client.waitFor(errorCoded("room-not-found"));
+    await client.waitFor(faultCoded("auth"));
     expect((await client.closed).code).toBe(1008);
   });
 
-  it("refuses commands before join", async () => {
-    const room = await createRoom();
-    const client = await connect(room.roomId);
-    client.send({ type: "find.claim", requestId: "r1", roundId: "x", targetId: "y" });
-
-    await client.waitFor(errorCoded("not-joined"));
-    expect((await client.closed).code).toBe(1008);
-  });
-
-  it("answers the driver's CORS preflight", async () => {
-    const response = await exports.default.fetch("https://example.com/api/rooms", {
+  it("answers a CORS preflight from the driver's null origin", async () => {
+    const response = await exports.default.fetch(`https://example.com/rooms/${roomKeys().roomId}`, {
       method: "OPTIONS",
-      headers: {
-        Origin: "null",
-        "Access-Control-Request-Method": "POST",
-        "Access-Control-Request-Headers": "content-type",
-      },
+      headers: { Origin: "null", "Access-Control-Request-Method": "GET" },
     });
     expect(response.status).toBe(204);
     expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
-    expect(response.headers.get("Access-Control-Allow-Methods")).toContain("POST");
   });
 
-  it("stores only a hash of the join token", async () => {
-    const room = await createRoom();
-    const stored = await runInDurableObject(env.ROOMS.getByName(room.roomId), (_instance, state) =>
-      JSON.stringify(state.storage.sql.exec("SELECT * FROM sqlite_master").toArray()) +
-      JSON.stringify(
-        state.storage.sql
-          .exec("SELECT name FROM sqlite_master WHERE type = 'table'")
-          .toArray()
-          .flatMap(({ name }) =>
-            String(name).startsWith("_cf") || String(name) === "sqlite_sequence"
-              ? []
-              : state.storage.sql.exec(`SELECT * FROM "${String(name)}"`).toArray(),
-          ),
-      ),
+  it("stores a hash of the join token and never the token", async () => {
+    const keys = roomKeys();
+    const { client } = await joined(keys, alice);
+    const rows = await runInDurableObject(env.ROOMS.getByName(keys.roomId), (_instance, state) =>
+      state.storage.sql
+        .exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '\\_cf%' ESCAPE '\\'")
+        .toArray()
+        .flatMap(({ name }) => state.storage.sql.exec(`SELECT * FROM "${String(name)}"`).toArray()),
     );
-    expect(stored).not.toContain(room.token);
+    const stored = JSON.stringify(rows);
+    const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(keys.joinToken)))]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+    expect(stored).toContain(hash);
+    expect(stored).not.toContain(keys.joinToken);
+    client.close();
   });
 });
 
 describe("rounds", () => {
   it("plays a full round from start to all-found", async () => {
-    const room = await createRoom();
-    const { client: a } = await joinedClient(room, alice);
-    const { client: b } = await joinedClient(room, bob);
+    const keys = roomKeys();
+    const { client: a } = await joined(keys, alice);
+    const { client: b } = await joined(keys, bob);
 
-    const round = await startRound(a);
+    const round = await startLive(a);
     expect(round.targets).toHaveLength(targetCount(1));
-    await b.waitFor(roomWhere((view) => view.current?.id === round.id));
+    expect(round.endsAt - round.startedAt).toBe(roundDurationMs(1));
+    await b.waitFor(snapshotWhere((room) => room.current?.id === round.id));
 
     const claimers = [a, b, a];
     for (const [index, target] of round.targets.entries()) {
-      expect(await claim(claimers[index]!, `claim-${index}`, round.id, target.id)).toMatchObject({
-        kind: "found",
-      });
+      expect((await claim(claimers[index]!, round, target.id)).code).toBe("ok");
     }
 
-    const ended = await b.waitFor(roomWhere((view) => view.current?.status === "ended"));
+    const ended = await b.waitFor(isEnded);
     expect(ended.room).toMatchObject({
       current: { id: round.id, status: "ended", reason: "all-found" },
       difficulty: 2,
       roundsPlayed: 1,
       league: [
-        { playerId: "alice", playerName: "Alice", finds: 2, roundsWon: 1 },
-        { playerId: "bob", playerName: "Bob", finds: 1, roundsWon: 0 },
+        { playerId: "alice", finds: 2, roundsWon: 1 },
+        { playerId: "bob", finds: 1, roundsWon: 0 },
       ],
     });
-    await b.waitFor(
-      (message): message is Extract<typeof message, { type: "taunt" }> =>
-        message.type === "taunt" && message.moment === "round-end",
-    );
+    expect(ended.taunt).toEqual(expect.any(String));
     a.close();
     b.close();
   });
 
-  it("refuses a second start while a round is live", async () => {
-    const room = await createRoom();
-    const { client } = await joinedClient(room, alice);
-    await startRound(client);
-
-    client.send({ type: "round.start", requestId: "start-2", board: { frameRect: { x: 0, y: 0, width: 10, height: 10 }, items: [] }, stampIds: ["cat"] });
-    expect((await client.waitFor(resultFor("start-2"))).result).toEqual({ kind: "round-live" });
+  it("answers busy to a second start while a round is live", async () => {
+    const { client } = await joined(roomKeys(), alice);
+    await startLive(client);
+    expect((await command(client, { type: "round.start", board })).code).toBe("busy");
     client.close();
   });
 
   it("ends the round at its deadline when the alarm fires", async () => {
-    const room = await createRoom();
-    const { client } = await joinedClient(room, alice);
-    const round = await startRound(client);
-    await claim(client, "claim-0", round.id, round.targets[0]!.id);
-    const stub = env.ROOMS.getByName(room.roomId);
+    const keys = roomKeys();
+    const { client } = await joined(keys, alice);
+    const round = await startLive(client);
+    await claim(client, round, round.targets[0]!.id);
+    const stub = env.ROOMS.getByName(keys.roomId);
+    expect(await runInDurableObject(stub, (_instance, state) => state.storage.getAlarm())).toBe(round.endsAt);
 
     expect(await runDurableObjectAlarm(stub)).toBe(true);
-    expect(client.received.some(roomWhere((view) => view.current?.status === "ended"))).toBe(false);
+    expect(client.received.some(isEnded)).toBe(false);
 
     vi.spyOn(Date, "now").mockReturnValue(round.endsAt + 1);
     await runInDurableObject(stub, (_instance, state) => state.storage.setAlarm(round.endsAt));
     expect(await runDurableObjectAlarm(stub)).toBe(true);
 
-    const ended = await client.waitFor(roomWhere((view) => view.current?.status === "ended"));
+    const ended = await client.waitFor(isEnded);
     expect(ended.room.current).toMatchObject({
       id: round.id,
       reason: "time-up",
       endedAt: round.endsAt,
       finds: [{ targetId: round.targets[0]!.id, playerId: "alice" }],
     });
-    expect(ended.room.league).toEqual([
-      { playerId: "alice", playerName: "Alice", finds: 1, roundsWon: 1 },
-    ]);
+    expect(ended.room.league).toEqual([{ playerId: "alice", playerName: "Alice", finds: 1, roundsWon: 1 }]);
     client.close();
   });
 
   it("scores a target once when two players claim it in the same tick", async () => {
-    const room = await createRoom();
-    const { client: a } = await joinedClient(room, alice);
-    const { client: b } = await joinedClient(room, bob);
-    const round = await startRound(a);
+    const keys = roomKeys();
+    const { client: a } = await joined(keys, alice);
+    const { client: b } = await joined(keys, bob);
+    const round = await startLive(a);
     const targetId = round.targets[0]!.id;
 
-    a.send({ type: "find.claim", requestId: "alice-claim", roundId: round.id, targetId });
-    b.send({ type: "find.claim", requestId: "bob-claim", roundId: round.id, targetId });
-    const results = [
-      (await a.waitFor(resultFor("alice-claim"))).result,
-      (await b.waitFor(resultFor("bob-claim"))).result,
+    a.send({ v: 1, type: "find.claim", requestId: "alice-claim", roundId: round.id, targetId });
+    b.send({ v: 1, type: "find.claim", requestId: "bob-claim", roundId: round.id, targetId });
+    const codes = [
+      (await a.waitFor(resultFor("alice-claim"))).code,
+      (await b.waitFor(resultFor("bob-claim"))).code,
     ];
 
-    expect(results.map(({ kind }) => kind).sort()).toEqual(["found", "taken"]);
-    const winner = results.find((result) => result.kind === "found");
-    const loser = results.find((result) => result.kind === "taken");
-    expect(loser).toMatchObject({ find: { playerId: (winner as { find: { playerId: string } }).find.playerId } });
-    const view = await a.waitFor(roomWhere((room) => room.current?.status === "live" && room.current.finds.length === 1));
-    expect(view.room.current?.status === "live" && view.room.current.finds).toHaveLength(1);
+    expect(codes.toSorted()).toEqual(["ok", "taken"]);
+    const winner = codes[0] === "ok" ? "alice" : "bob";
+    const after = await a.waitFor(
+      snapshotWhere((room) => room.current?.status === "live" && room.current.finds.length > 0),
+    );
+    expect((after.room.current as LiveRound).finds).toEqual([expect.objectContaining({ targetId, playerId: winner })]);
+    expect(after.room.league.map(({ finds }) => finds).toSorted()).toEqual([0, 1]);
     a.close();
     b.close();
   });
 
-  it("replays a claim by requestId without scoring it twice", async () => {
-    const room = await createRoom();
-    const { client: a } = await joinedClient(room, alice);
-    const { client: b } = await joinedClient(room, bob);
-    const round = await startRound(a);
+  it("replays a claim by requestId without scoring twice, and still answers ok after the round ended", async () => {
+    const keys = roomKeys();
+    const { client: a } = await joined(keys, alice);
+    const { client: b } = await joined(keys, bob);
+    const round = await startLive(a);
     const [first, ...rest] = round.targets;
 
-    const original = await claim(a, "claim-first", round.id, first!.id);
-    const replay = await claim(a, "claim-first", round.id, first!.id);
-    expect(original).toMatchObject({ kind: "found", find: { playerId: "alice" } });
+    const original = await claim(a, round, first!.id, "claim-first");
+    const replay = await claim(a, round, first!.id, "claim-first");
+    expect(original.code).toBe("ok");
     expect(replay).toEqual(original);
+    expect((await claim(b, round, first!.id, "claim-first")).code).toBe("taken");
 
-    b.send({ type: "find.claim", requestId: "claim-first", roundId: round.id, targetId: first!.id });
-    await b.waitFor(errorCoded("request-reused"));
-
-    for (const [index, target] of rest.entries()) await claim(b, `bob-${index}`, round.id, target.id);
-    const ended = await a.waitFor(roomWhere((view) => view.current?.status === "ended"));
+    for (const target of rest) await claim(b, round, target.id);
+    const ended = await a.waitFor(isEnded);
     expect(ended.room.league).toEqual([
       { playerId: "alice", playerName: "Alice", finds: 1, roundsWon: 0 },
       { playerId: "bob", playerName: "Bob", finds: rest.length, roundsWon: 1 },
     ]);
-    expect(await claim(a, "claim-first", round.id, first!.id)).toEqual(original);
+
+    const afterEnd = await claim(a, round, first!.id, "claim-first");
+    expect(afterEnd).toEqual(original);
+    expect((await claim(a, round, first!.id)).code).toBe("expired");
     a.close();
     b.close();
   });
 
-  it("pre-plants the next round while the current one is live", async () => {
-    const room = await createRoom();
-    const { client } = await joinedClient(room, alice);
-    const round = await startRound(client);
+  it("answers request-conflict when a requestId returns with a changed payload", async () => {
+    const { client } = await joined(roomKeys(), alice);
+    const round = await startLive(client);
+    const [first, second] = round.targets;
 
-    const ready = await client.waitFor(roomWhere((view) => view.next?.status === "ready"));
+    expect((await claim(client, round, first!.id, "reused")).code).toBe("ok");
+    const conflict = await claim(client, round, second!.id, "reused");
+    expect(conflict.code).toBe("request-conflict");
+
+    const latest = client.received.filter(snapshotWhere(() => true)).at(-1)!;
+    expect((latest.room.current as LiveRound).finds.map(({ targetId }) => targetId)).toEqual([first!.id]);
+    expect((await claim(client, round, second!.id)).code).toBe("ok");
+    client.close();
+  });
+
+  it("pre-plants the next round from the first board offer and promotes it on start", async () => {
+    const keys = roomKeys();
+    const { client: a } = await joined(keys, alice);
+    const { client: b } = await joined(keys, bob);
+    const round = await startLive(a);
+
+    const offers = await Promise.all([
+      command(a, { type: "board.offer", afterRoundId: round.id, board }),
+      command(b, { type: "board.offer", afterRoundId: round.id, board }),
+    ]);
+    expect(offers.map(({ code }) => code)).toEqual(["ok", "ok"]);
+    const ready = await a.waitFor(snapshotWhere((room) => room.next?.status === "ready"));
     expect(ready.room.current).toMatchObject({ id: round.id, status: "live" });
-    expect(ready.room.next).toEqual({ id: expect.any(String), status: "ready" });
     const nextId = ready.room.next!.id;
 
-    for (const [index, target] of round.targets.entries()) {
-      await claim(client, `claim-${index}`, round.id, target.id);
-    }
-    const second = await startRound(client, "start-2");
+    for (const target of round.targets) await claim(a, round, target.id);
+    await a.waitFor(isEnded);
+    const second = await startLive(a);
     expect(second.id).toBe(nextId);
-    expect(second.targets).toHaveLength(targetCount(Math.min(MAX_DIFFICULTY, 2)));
+    expect(second.targets).toHaveLength(targetCount(2));
+    a.close();
+    b.close();
+  });
+
+  it("never puts a round's targets on the wire before it is live", async () => {
+    const keys = roomKeys();
+    const { client: a } = await joined(keys, alice);
+    const round = await startLive(a);
+    await command(a, { type: "board.offer", afterRoundId: round.id, board });
+    const ready = await a.waitFor(snapshotWhere((room) => room.next?.status === "ready"));
+    const { client: late } = await joined(keys, bob);
+    for (const target of round.targets) await claim(a, round, target.id);
+    await a.waitFor(isEnded);
+    const beforePromotion = [...a.received, ...late.received];
+
+    const second = await startLive(a);
+    expect(second.id).toBe(ready.room.next!.id);
+
+    for (const message of beforePromotion) {
+      const text = JSON.stringify(message);
+      for (const target of second.targets) expect(text).not.toContain(JSON.stringify(target.id));
+    }
+    for (const message of [...a.received, ...late.received]) {
+      if (message.type !== "snapshot") continue;
+      expect(message.room.next === null || !("targets" in message.room.next)).toBe(true);
+      const current = message.room.current;
+      if (current?.status === "planting" || current?.status === "ready") {
+        expect("targets" in current).toBe(false);
+      }
+    }
+    a.close();
+    late.close();
+  });
+
+  it("cancels a live round and changes the level only between rounds", async () => {
+    const { client } = await joined(roomKeys(), alice);
+    const round = await startLive(client);
+    expect((await command(client, { type: "difficulty.set", value: 5 })).code).toBe("busy");
+
+    expect((await command(client, { type: "round.cancel", roundId: round.id })).code).toBe("ok");
+    const ended = await client.waitFor(isEnded);
+    expect(ended.room.current).toMatchObject({ id: round.id, reason: "cancelled" });
+
+    expect((await command(client, { type: "difficulty.set", value: 5 })).code).toBe("ok");
+    const harder = await startLive(client);
+    expect(harder.targets).toHaveLength(targetCount(5));
+    expect(harder.endsAt - harder.startedAt).toBe(roundDurationMs(5));
     client.close();
   });
 });
 
 describe("abuse limits", () => {
-  it("rejects an oversized message and closes the socket", async () => {
-    const room = await createRoom();
-    const { client } = await joinedClient(room, alice);
-    client.send("x".repeat(MAX_MESSAGE_CHARACTERS + 1));
+  it("rejects an oversized frame and closes the socket", async () => {
+    const { client } = await joined(roomKeys(), alice);
+    client.send("x".repeat(MAX_FRAME_CHARS + 1));
 
-    await client.waitFor(errorCoded("too-large"));
+    await client.waitFor(faultCoded("invalid"));
     expect((await client.closed).code).toBe(1009);
   });
 
-  it("closes a connection that sends more than 20 messages in a second", async () => {
-    const room = await createRoom();
-    const { client } = await joinedClient(room, alice);
-    for (let index = 0; index < 25; index++) {
-      client.send({ type: "find.claim", requestId: `flood-${index}`, roundId: "none", targetId: "none" });
+  it("rejects a malformed frame and closes the socket", async () => {
+    const { client } = await joined(roomKeys(), alice);
+    client.send({ v: 1, type: "find.claim", requestId: requestId("bad"), roundId: "x" });
+
+    await client.waitFor(faultCoded("invalid"));
+    expect((await client.closed).code).toBe(1002);
+  });
+
+  it("closes a connection that floods the room", async () => {
+    const { client } = await joined(roomKeys(), alice);
+    for (let index = 0; index < 30; index++) {
+      client.send({ v: 1, type: "find.claim", requestId: `flood-${index}`, roundId: "none", targetId: "none" });
     }
 
-    await client.waitFor(errorCoded("rate-limited"));
+    const fault = await client.waitFor(faultCoded("rate-limit"));
+    expect(fault.retryAfterMs).toBeGreaterThan(0);
     expect((await client.closed).code).toBe(1008);
   });
 });
