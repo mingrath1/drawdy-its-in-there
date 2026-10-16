@@ -176,14 +176,14 @@ async function joinRemote(t: ReturnType<typeof setup>, first: unknown, difficult
     let revision = 0;
     const room = {
         socket,
-        snapshot(current: unknown, options: { revision?: number; difficulty?: number } = {}) {
+        snapshot(current: unknown, options: { revision?: number; difficulty?: number; nextDifficulty?: number } = {}) {
             socket.deliver({
                 v: 1,
                 type: "snapshot",
                 revision: options.revision ?? ++revision,
                 serverNow: Date.now(),
                 self: "u-ana",
-                room: { roomId: "room-remote", difficulty: options.difficulty ?? difficulty, nextDifficulty: options.difficulty ?? difficulty, league: [], current, next: null, roundsPlayed: 4 },
+                room: { roomId: "room-remote", difficulty: options.difficulty ?? difficulty, nextDifficulty: options.nextDifficulty ?? options.difficulty ?? difficulty, league: [], current, next: null, roundsPlayed: 4 },
                 taunt: "go",
             });
         },
@@ -286,10 +286,7 @@ describe("driver", () => {
         assert.equal(markers(drawdy).length, 3);
         assert.equal(drawdy.tool, "pencil", "the previous tool is back");
         assert.ok(bannerTexts(drawdy).includes("เจอครบ! · All found!"));
-        assert.ok(
-            bannerTexts(drawdy).includes("รอบต่อไป · Next round (Lv 1)"),
-            "the driver labels the next round with room.difficulty; it should show room.nextDifficulty (Lv 2)"
-        );
+        assert.ok(bannerTexts(drawdy).includes("รอบต่อไป · Next round (Lv 2)"), "all found raises the level");
         assert.equal(drawdy.floating.get("iit:banner").schema.styles.pointerEvents, "auto");
 
         drawdy.click(onEvent, NEXT_BUTTON_ID);
@@ -321,7 +318,7 @@ describe("driver", () => {
         drawdy.click(onEvent, ACTION);
         await flush();
         assert.equal(frames(drawdy).length, 1, "clicking with the hunt frame selected rejoins its room");
-        assert.equal(drawnTargets(drawdy).length, targetCount(2), "the room resumes at its level");
+        assert.equal(drawnTargets(drawdy).length, targetCount(2), "the room resumes at the level its label promised");
     });
 
     it("draws and judges targets where the frame is now when it moved after planting", async () => {
@@ -687,5 +684,17 @@ describe("driver", () => {
         }
         assert.ok(bannerTexts(t.drawdy).includes("เจอครบ! · All found!"));
         assert.deepEqual(t.drawdy.typesIssued().filter((type) => type.includes("storage")), []);
+    });
+
+    it("labels the next round with the level the room names for it, not the level just played", async () => {
+        const t = setup();
+        const room = await joinRemote(t, live("round-1"), 3);
+        const all = [findBy(0, "u-ben"), findBy(1, "u-ben"), findBy(2, "u-ben")];
+        room.snapshot(ended(live("round-1"), "all-found", all), { difficulty: 3, nextDifficulty: 4 });
+        await t.flush();
+        assert.ok(bannerTexts(t.drawdy).includes("รอบต่อไป · Next round (Lv 4)"));
+        room.snapshot(null, { difficulty: 1, nextDifficulty: 3 });
+        await t.flush();
+        assert.ok(bannerTexts(t.drawdy).includes("เริ่ม · Start (Lv 3)"), "a level chosen before the first round");
     });
 });

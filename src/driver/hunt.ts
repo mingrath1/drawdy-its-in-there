@@ -620,7 +620,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
 
     function bannerModel(h: Hunt): BannerModel {
         const s = h.snapshot;
-        const nextLevel = s?.room.difficulty ?? 1;
+        const nextLevel = s?.room.nextDifficulty ?? 1;
         const league = (s?.room.league ?? []).map((e) => ({ name: e.playerName, finds: e.finds }));
         const round = s?.room.current ?? null;
         if (!s) return { nextLevel, league, phase: "connecting" };

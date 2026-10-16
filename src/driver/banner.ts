@@ -12,7 +12,7 @@ export const BANNER_TOP = 72;
 
 type BannerTarget = { label: string; labelTh?: string; foundColor: string | null };
 
-/** `nextLevel` is the room's difficulty: the level the next round is planted at. */
+/** `nextLevel` is the room's nextDifficulty: the level the next round plays at. */
 export type BannerModel = { nextLevel: number; league: { name: string; finds: number }[] } & (
     | { phase: "connecting" }
     | { phase: "idle" }
