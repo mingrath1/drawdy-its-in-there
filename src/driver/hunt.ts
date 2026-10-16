@@ -445,28 +445,32 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
 
     /** A target without a preview is never judged. Each snapshot of a live round tries to draw it again. */
     async function drawMissing(view: RoundView) {
-        for (const tv of view.targets.values()) {
-            if (tv.drawn) continue;
-            tv.ids = tv.runs.map(() => ctx.generateId());
-            const at = view.offset;
-            try {
-                const { previewId, previewed } = await send({
-                    type: "command:scene:create-drawdy-preview-elements",
-                    req: { elements: previewLines(tv.ids, placedRuns(tv, at), tv.color, tv.strokeWidth) },
-                });
-                if (previewed === tv.ids.length) {
-                    tv.drawn = { previewId, at };
-                    continue;
-                }
-                await quietly("removing a partly drawn target", send({ type: "command:scene:delete-drawdy-preview-elements", req: { previewIds: [previewId] } }));
-                warn(`target ${tv.planted.id} drew ${previewed} of ${tv.ids.length} lines; it is drawn again on the next snapshot`);
-            } catch (error) {
-                warn(`could not draw target ${tv.planted.id}:`, error instanceof Error ? error.message : error);
+        for (const tv of view.targets.values()) if (!tv.drawn) await draw(view, tv);
+    }
+
+    async function draw(view: RoundView, tv: TargetView) {
+        tv.ids = tv.runs.map(() => ctx.generateId());
+        const at = view.offset;
+        try {
+            const { previewId, previewed } = await send({
+                type: "command:scene:create-drawdy-preview-elements",
+                req: { elements: previewLines(tv.ids, placedRuns(tv, at), tv.color, tv.strokeWidth) },
+            });
+            if (previewed === tv.ids.length) {
+                tv.drawn = { previewId, at };
+                return;
             }
+            await quietly("removing a partly drawn target", send({ type: "command:scene:delete-drawdy-preview-elements", req: { previewIds: [previewId] } }));
+            warn(`target ${tv.planted.id} drew ${previewed} of ${tv.ids.length} lines; it is drawn again on the next snapshot`);
+        } catch (error) {
+            warn(`could not draw target ${tv.planted.id}:`, error instanceof Error ? error.message : error);
         }
     }
 
-    /** Redraws the target at the round's offset. Its drawn offset moves only once every line has. */
+    /**
+     * Redraws the target at the round's offset. Its drawn offset moves only once every line has. When only
+     * some lines changed, the target shows neither state, so it is taken down and drawn again whole.
+     */
     async function paint(view: RoundView, tv: TargetView, color: string, strokeWidth = tv.planted.strokeWidth) {
         tv.color = color;
         tv.strokeWidth = strokeWidth;
@@ -477,8 +481,15 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             type: "command:scene:update-drawdy-preview-elements",
             req: { elements: previewLines(tv.ids, placedRuns(tv, at), color, strokeWidth) },
         });
-        if (updated !== tv.ids.length) throw new Error(`target ${tv.planted.id} updated ${updated} of ${tv.ids.length} lines`);
-        drawn.at = at;
+        if (updated === tv.ids.length) {
+            drawn.at = at;
+            return;
+        }
+        if (updated === 0) throw new Error(`target ${tv.planted.id} updated none of its ${tv.ids.length} lines`);
+        warn(`target ${tv.planted.id} updated ${updated} of ${tv.ids.length} lines; it is drawn again`);
+        tv.drawn = null;
+        await quietly("removing a partly updated target", send({ type: "command:scene:delete-drawdy-preview-elements", req: { previewIds: [drawn.previewId] } }));
+        await draw(view, tv);
     }
 
     /** Moves the targets with the hunt frame. A target whose move failed is judged where it shows and moved on the next try. */

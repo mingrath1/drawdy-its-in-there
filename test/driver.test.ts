@@ -60,6 +60,14 @@ function drawnTargets(drawdy: FakeDrawdy) {
     });
 }
 
+/** The drawn target that shows `like` whole, moved by (dx, dy), if one does. */
+function drawnLike(drawdy: FakeDrawdy, like: ReturnType<typeof drawnTargets>[number], dx = 0, dy = 0) {
+    const near = (a: number, b: number) => Math.abs(a - b) < 1e-6;
+    return drawnTargets(drawdy).find(
+        (d) => d.batch.length === like.batch.length && near(d.cx, like.cx + dx) && near(d.cy, like.cy + dy) && near(d.w, like.w) && near(d.h, like.h)
+    );
+}
+
 function loopAround(t: { cx: number; cy: number; w: number; h: number }): Point[] {
     const r = 0.55 * Math.hypot(t.w, t.h);
     return Array.from({ length: 33 }, (_, i): Point => [t.cx + r * Math.cos((i / 32) * 2 * Math.PI), t.cy + r * Math.sin((i / 32) * 2 * Math.PI)]);
@@ -131,7 +139,13 @@ function setup(drawdy = new FakeDrawdy()) {
                 return { ...request, res: { value } };
             },
         });
-    return { drawdy, driver, onEvent, flush, failOnce, rewriteOnce, answerOnce };
+    /** The next command that matches reaches the board with only its first `n` elements, as when Drawdy applies part of it. */
+    const truncateOnce = (match: (request: any) => boolean, n: number) =>
+        overrides.push({
+            match,
+            answer: (request) => drawdy.issue({ ...request, req: { ...request.req, elements: request.req.elements.slice(0, n) } }),
+        });
+    return { drawdy, driver, onEvent, flush, failOnce, rewriteOnce, answerOnce, truncateOnce };
 }
 
 /** Turns the event loop without waiting on the driver's queue, for when the queue itself may be stuck. */
@@ -669,6 +683,47 @@ describe("driver", () => {
         laser(t, [circleTarget(0), circleTarget(0, 1)]);
         await t.flush();
         assert.deepEqual(room.sent("find.claim").map((c) => c.targetId), ["t0"]);
+    });
+
+    it("takes down a target that moved only some of its lines, and judges it only once it is drawn whole again", async () => {
+        const t = setup();
+        const room = await joinRemote(t, live());
+        const [t0] = drawnTargets(t.drawdy);
+        const t0Line = t0.batch[0].drawdyElementId;
+        t.truncateOnce((r) => r.type === "command:scene:update-drawdy-preview-elements" && r.req.elements[0].drawdyElementId === t0Line, 1);
+        t.failOnce((r) => r.type === "command:scene:create-drawdy-preview-elements");
+        const frame = t.drawdy.elements.get("hunt-1")!;
+        frame.x += 150;
+        frame.y += 80;
+        mock.timers.tick(1_000);
+        await t.flush();
+        assert.equal(drawnTargets(t.drawdy).length, 2, "the half-moved target is gone");
+
+        laser(t, [circleTarget(0)]);
+        await t.flush();
+        laser(t, [circleTarget(0), circleTarget(0, 150, 80)]);
+        await t.flush();
+        assert.equal(room.sent("find.claim").length, 0, "an undrawn target is not judged where it was or where it goes");
+
+        room.snapshot(live());
+        await t.flush();
+        assert.ok(drawnLike(t.drawdy, t0, 150, 80), "the next snapshot draws it whole where the frame is now");
+        laser(t, [circleTarget(0), circleTarget(0, 150, 80), circleTarget(0, 151, 80)]);
+        await t.flush();
+        assert.deepEqual(room.sent("find.claim").map((c) => c.targetId), ["t0"]);
+    });
+
+    it("draws a found target again, whole in the finder's colour, when its recolour updated only some lines", async () => {
+        const t = setup();
+        const room = await joinRemote(t, live());
+        const [t0] = drawnTargets(t.drawdy);
+        const t0Line = t0.batch[0].drawdyElementId;
+        t.truncateOnce((r) => r.type === "command:scene:update-drawdy-preview-elements" && r.req.elements[0].drawdyElementId === t0Line, 1);
+        room.snapshot(live("round-9", undefined, [findBy(0, "u-ben", "Ben", "#22c55e")]));
+        await t.flush();
+        const shown = drawnLike(t.drawdy, t0);
+        assert.ok(shown, "t0 shows whole where it was");
+        assert.ok(shown.batch.every((e: any) => e.strokeColor === "#22c55e" && e.strokeWidth === 3), "every line in Ben's colour");
     });
 
     it("writes a marker whose write failed on the next snapshot", async () => {
