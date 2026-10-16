@@ -640,4 +640,19 @@ describe("driver", () => {
         await t.flush();
         assert.equal(t.drawdy.tool, "pencil", "Stop restores the tool");
     });
+
+    it("restores the tool and stops the countdown when a live round is replaced without ending", async () => {
+        const t = setup();
+        const room = await joinRemote(t, live("round-1"));
+        assert.equal(t.drawdy.tool, "laser-pointer");
+        room.snapshot({ status: "planting", id: "round-2", frameRect: HUNT_FRAME });
+        await t.flush();
+        assert.equal(t.drawdy.tool, "pencil");
+        assert.equal(t.drawdy.previews.size, 0);
+        const upserts = () => t.drawdy.commands.filter((c) => c.type === "command:dom:upsert-floating-element").length;
+        const before = upserts();
+        mock.timers.tick(5_000);
+        await t.flush();
+        assert.equal(upserts(), before, "the countdown stopped");
+    });
 });

@@ -490,12 +490,14 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         }, REVEAL_BLINK_MS);
     }
 
+    /** Tears down the round on screen however it went: ended, replaced, or left mid-play. */
     async function clearRound(h: Hunt) {
         const view = h.round;
-        if (!view) return;
         h.round = null;
-        if (view.reveal) clearInterval(view.reveal);
-        const previewIds = [...view.targets.values()].flatMap((tv) => (tv.previewId ? [tv.previewId] : []));
+        stopTicker(h);
+        if (view?.reveal) clearInterval(view.reveal);
+        await quietly("restoring the tool", restoreTool(h));
+        const previewIds = view ? [...view.targets.values()].flatMap((tv) => (tv.previewId ? [tv.previewId] : [])) : [];
         if (previewIds.length > 0) {
             await quietly("removing targets", send({ type: "command:scene:delete-drawdy-preview-elements", req: { previewIds } }));
         }
@@ -666,10 +668,8 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
     async function leave(h: Hunt) {
         if (hunt === h) hunt = null;
         h.host.close();
-        stopTicker(h);
         await clearRound(h);
         if (h.banner) await quietly("removing the banner", send({ type: "command:dom:remove-floating-element", req: { domId: BANNER_ID } }));
-        await quietly("restoring the tool", restoreTool(h));
         for (const subscriptionId of h.subscriptions) {
             await quietly("unsubscribing", send({ type: "command:subscription:remove", req: { subscriptionId } }));
         }
