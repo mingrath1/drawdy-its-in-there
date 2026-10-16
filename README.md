@@ -107,7 +107,8 @@ Notes:
 - The backend must be on public HTTPS. The driver runs in a worker that cannot reach `localhost`.
 - A hunt frame stores the backend URL when it is created. Frames made before you set `BACKEND_URL` stay offline, so start a new frame.
 - The frame holds the room's join token. Anyone who can open the board can join the room.
-- A room takes 32 players online at once and keeps up to 256 players on its scoreboard.
+- A room takes 32 players online at once. Another player stays on "Connecting…" and retries until a place frees.
+- A room keeps up to 256 players on its scoreboard. A new player after that is told the room is full, because a scoreboard place never frees.
 - The `Room` class uses SQLite storage. Cloudflare's Workers Free plan allows only SQLite-backed Durable Objects, so this backend fits it. Free-plan usage has daily limits, so check your plan against [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/).
 
 ## Development

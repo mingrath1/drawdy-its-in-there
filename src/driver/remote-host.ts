@@ -62,6 +62,15 @@ export function createRemoteHost(options: RemoteHostOptions): HuntHost {
     let watchdog: Timer | null = null;
     let pendingOpen: { resolve: () => void; reject: (error: Error) => void; timer: Timer } | null = null;
 
+    const timeOut = () => stop(new RoomFault("timeout"));
+
+    /** Open gives up on a room that stays silent, not on one that asked for a wait. */
+    const postponeOpenDeadline = (ms: number) => {
+        if (!pendingOpen) return;
+        clearTimeout(pendingOpen.timer);
+        pendingOpen.timer = setTimeout(timeOut, ms);
+    };
+
     const settleOpen = (error?: Error) => {
         if (!pendingOpen) return;
         clearTimeout(pendingOpen.timer);
@@ -157,7 +166,10 @@ export function createRemoteHost(options: RemoteHostOptions): HuntHost {
             armWatchdog(true);
         } else if (message.type === "fault") {
             if (message.code === "auth" || message.code === "version" || message.code === "full") refuse(message.code);
-            else retryFloorMs = message.retryAfterMs;
+            else {
+                retryFloorMs = message.retryAfterMs;
+                postponeOpenDeadline(message.retryAfterMs + OPEN_TIMEOUT_MS);
+            }
         }
         receive?.(message);
     };
@@ -168,8 +180,7 @@ export function createRemoteHost(options: RemoteHostOptions): HuntHost {
             receive = onMessage;
             stopped = false;
             return new Promise<void>((resolve, reject) => {
-                const timer = setTimeout(() => stop(new RoomFault("timeout")), OPEN_TIMEOUT_MS);
-                pendingOpen = { resolve, reject, timer };
+                pendingOpen = { resolve, reject, timer: setTimeout(timeOut, OPEN_TIMEOUT_MS) };
                 dial();
             });
         },

@@ -136,10 +136,11 @@ describe("room access", () => {
     );
     const outcomes = await Promise.all(
       racers.map((racer) =>
-        racer.waitFor((m): m is ServerMessage => m.type === "snapshot" || (m.type === "fault" && m.code === "full")),
+        racer.waitFor((m): m is ServerMessage => m.type === "snapshot" || (m.type === "fault" && m.code === "unavailable")),
       ),
     );
     expect(outcomes.map(({ type }) => type).toSorted()).toEqual(["fault", "fault", "snapshot"]);
+    expect(racers.some((racer) => racer.received.some(faultCoded("full")))).toBe(false);
     for (const client of [...online, ...racers.filter((_, i) => outcomes[i]!.type === "snapshot")]) client.close();
   }, 20_000);
 
@@ -152,7 +153,8 @@ describe("room access", () => {
     const { client: second } = await joined(keys, player(0));
     const late = await connect(keys.roomId);
     late.send({ v: 1, type: "hello", roomId: keys.roomId, joinToken: keys.joinToken, player: player(MAX_PLAYERS_ONLINE) });
-    await late.waitFor(faultCoded("full"));
+    const fault = await late.waitFor(faultCoded("unavailable"));
+    expect(fault.retryAfterMs, "a place frees when someone leaves, so the player is told to try again").toBeGreaterThan(0);
     for (const client of [...online, second]) client.close();
   }, 20_000);
 
@@ -585,7 +587,8 @@ describe("connections waiting for hello", () => {
     const keys = roomKeys();
     const waiting = await Promise.all(Array.from({ length: MAX_PENDING_HELLOS }, () => connect(keys.roomId)));
     const extra = await connect(keys.roomId);
-    await extra.waitFor(faultCoded("full"));
+    const fault = await extra.waitFor(faultCoded("unavailable"));
+    expect(fault.retryAfterMs).toBe(HELLO_TIMEOUT_MS);
     expect((await extra.closed).code).toBe(1008);
 
     waiting[0]!.send({ v: 1, type: "hello", roomId: keys.roomId, joinToken: keys.joinToken, player: alice });

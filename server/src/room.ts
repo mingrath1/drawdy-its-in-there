@@ -164,7 +164,7 @@ export class Room extends DurableObject<Env> {
     const pair = new WebSocketPair();
     this.ctx.acceptWebSocket(pair[1]);
     pair[1].serializeAttachment({ roomId, openedAt: now } satisfies ConnectionState);
-    if (waiting >= MAX_PENDING_HELLOS) this.#fault(pair[1], "full", 1008, HELLO_TIMEOUT_MS);
+    if (waiting >= MAX_PENDING_HELLOS) this.#fault(pair[1], "unavailable", 1008, HELLO_TIMEOUT_MS);
     else await this.#setAlarmNoLaterThan(now + HELLO_TIMEOUT_MS);
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
@@ -211,6 +211,7 @@ export class Room extends DurableObject<Env> {
   /**
    * The first hello to an empty room creates it. Its id commits to the token, so only a token holder gets this far.
    * Commits run one at a time, so admitting and attaching the player inside one keeps racing hellos under both caps.
+   * Only the league never frees a place, so only a full league is final. A full room online is worth retrying.
    */
   async #hello(socket: WebSocket, hello: Hello): Promise<void> {
     const state = connectionState(socket);
@@ -225,7 +226,8 @@ export class Room extends DurableObject<Env> {
     const admitted = await this.#harness.commit(async (tx) => {
       const doc = await tx.doc(HuntDoc);
       const before = doc.open === null ? openRoom(hello.roomId) : plain<RoomState>(doc.open.room);
-      if (!canJoin(before, player.playerId) || !this.#hasPlaceOnline(player.playerId)) return null;
+      if (!canJoin(before, player.playerId)) return "full" as const;
+      if (!this.#hasPlaceOnline(player.playerId)) return "unavailable" as const;
       socket.serializeAttachment({ ...state, player } satisfies ConnectionState);
       doc.open ??= { revision: 0, taunt: null, room: before };
       const after = joinRoom(expireRound(before, now), player);
@@ -233,7 +235,7 @@ export class Room extends DurableObject<Env> {
       const published = publish(doc.open, before, after, this.#tauntFor(before, after));
       return { open: plain<OpenRoom>(doc.open), published };
     }, context);
-    if (admitted === null) return this.#fault(socket, "full", 1008, RECOVERY_ALARM_DELAY_MS);
+    if (typeof admitted === "string") return this.#fault(socket, admitted, 1008, RECOVERY_ALARM_DELAY_MS);
     if (!admitted.published) this.#send(socket, snapshot(admitted.open, player.playerId, null));
     await this.#refreshAlarmAfterReply();
   }

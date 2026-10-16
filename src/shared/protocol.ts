@@ -116,6 +116,10 @@ export type Snapshot = {
 
 export type Result = { v: 1; type: "result"; requestId: string; command: CommandType; code: ResultCode; revision: number };
 
+/**
+ * "full" means the league has no place for this player and never will, so the client stops.
+ * "rate-limit" and "unavailable" are for now: the client dials again after retryAfterMs at the earliest.
+ */
 export type FaultCode = "invalid" | "version" | "auth" | "rate-limit" | "full" | "unavailable";
 export type Fault = { v: 1; type: "fault"; code: FaultCode; retryAfterMs: number };
 

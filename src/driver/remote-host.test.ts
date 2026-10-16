@@ -253,6 +253,21 @@ describe("remote host", () => {
         assert.equal(t.sockets.length, 2);
     });
 
+    it("lets open wait out a retryAfterMs the room names, and still gives up on a silent room after it", async () => {
+        const t = setup();
+        let refused: string | null = null;
+        t.opened.catch((e: RoomFault) => (refused = e.code));
+        t.last().accept();
+        t.last().deliver({ v: 1, type: "fault", code: "unavailable", retryAfterMs: 60_000 });
+        t.last().drop();
+        mock.timers.tick(60_000 + 14_999);
+        await settle();
+        assert.equal(refused, null, "open still waits");
+        mock.timers.tick(1);
+        await settle();
+        assert.equal(refused, "timeout");
+    });
+
     it("stops for good when the room speaks another protocol version", async () => {
         const t = setup();
         let error: RoomFault | undefined;

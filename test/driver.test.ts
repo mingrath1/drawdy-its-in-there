@@ -472,6 +472,39 @@ describe("driver", () => {
         assert.equal(t.drawdy.floating.size, 0, "the notice closed itself");
     });
 
+    it("keeps dialing a room that is busy for now, after the wait it names, and plays once it gets in", async () => {
+        const t = setup();
+        t.drawdy.add({ id: "hunt-1", type: "frame", ...HUNT_FRAME, meta: { iit: REMOTE_META } });
+        await t.driver.activate();
+        t.drawdy.click(t.onEvent, ACTION);
+        await pump(() => sockets.length > 0);
+        sockets[0].accept();
+        sockets[0].deliver({ v: 1, type: "fault", code: "unavailable", retryAfterMs: 60_000 });
+        sockets[0].drop();
+        await t.flush();
+        assert.ok(bannerTexts(t.drawdy).includes("กำลังเชื่อมต่อ… · Connecting…"), "still connecting");
+        assert.ok(!bannerTexts(t.drawdy).includes("ห้องเต็ม · This room is full"), "not full");
+
+        mock.timers.tick(59_999);
+        await t.flush();
+        assert.equal(sockets.length, 1, "no redial before the room's wait is over");
+        mock.timers.tick(1);
+        await t.flush();
+        assert.equal(sockets.length, 2, "a redial once it is");
+        sockets[1].accept();
+        sockets[1].deliver({
+            v: 1,
+            type: "snapshot",
+            revision: 1,
+            serverNow: Date.now(),
+            self: "u-ana",
+            room: { roomId: "room-remote", difficulty: 1, nextDifficulty: 1, league: [], current: live(), next: null, roundsPlayed: 0 },
+            taunt: null,
+        });
+        await t.flush();
+        assert.equal(drawnTargets(t.drawdy).length, 3);
+    });
+
     it("never judges a stroke from an earlier round again", async () => {
         const t = setup();
         const room = await joinRemote(t, live("round-1", [remoteTarget(0)]));
