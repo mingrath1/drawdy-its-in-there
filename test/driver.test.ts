@@ -2,6 +2,7 @@
 // judge, and rendering, with only Drawdy's host replaced.
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, it, mock } from "node:test";
 import type { DriverCommandIssuer, DriverManifest, ModuleStyling } from "@drawdy/driver-protocol";
 import { activate } from "../src/index.ts";
@@ -284,11 +285,6 @@ describe("driver", () => {
         await flush();
         assert.equal(markers(drawdy).length, 3);
         assert.equal(drawdy.tool, "pencil", "the previous tool is back");
-        assert.equal(
-            drawdy.kv.get("local-difficulty"),
-            undefined,
-            "the driver saves room.difficulty, which stays at the last round's level 1; it should save room.nextDifficulty (2)"
-        );
         assert.ok(bannerTexts(drawdy).includes("เจอครบ! · All found!"));
         assert.ok(
             bannerTexts(drawdy).includes("รอบต่อไป · Next round (Lv 1)"),
@@ -301,7 +297,6 @@ describe("driver", () => {
         targets = drawnTargets(drawdy);
         assert.equal(targets.length, targetCount(2), "old targets removed, the pre-planted level 2 round drawn");
         assert.equal(drawdy.tool, "laser-pointer");
-        assert.deepEqual(drawdy.kv.get("local-difficulty"), { difficulty: 2 });
 
         mock.timers.tick(roundDurationMs(2));
         await flush();
@@ -310,7 +305,6 @@ describe("driver", () => {
         mock.timers.tick(3_000);
         await flush();
         assert.ok(drawnTargets(drawdy).every((t) => t.batch.every((e: any) => e.strokeColor === "#ef4444")), "and stay red after the flash");
-        assert.deepEqual(drawdy.kv.get("local-difficulty"), { difficulty: 2 });
         assert.ok(bannerTexts(drawdy).includes("หมดเวลา! · Time's up!"));
         assert.ok(bannerTexts(drawdy).includes("รอบต่อไป · Next round (Lv 2)"), "time-up keeps the level");
 
@@ -328,7 +322,6 @@ describe("driver", () => {
         await flush();
         assert.equal(frames(drawdy).length, 1, "clicking with the hunt frame selected rejoins its room");
         assert.equal(drawnTargets(drawdy).length, targetCount(2), "the room resumes at its level");
-        assert.deepEqual(drawdy.kv.get("local-difficulty"), { difficulty: 2 });
     });
 
     it("draws and judges targets where the frame is now when it moved after planting", async () => {
@@ -676,5 +669,23 @@ describe("driver", () => {
         t.drawdy.click(t.onEvent, NEXT_BUTTON_ID);
         await t.flush();
         assert.equal(room.sent("round.start").length, 3, "so does a snapshot showing the round it started");
+    });
+
+    it("plays without ever asking for storage", async () => {
+        const manifest = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8"));
+        assert.deepEqual(manifest.permissions, ["dom", "scene", "collaboration"]);
+        const t = setup();
+        scribbleBoard(t.drawdy);
+        await t.driver.activate();
+        t.drawdy.click(t.onEvent, ACTION);
+        await t.flush();
+        const targets = drawnTargets(t.drawdy);
+        assert.equal(targets.length, targetCount(1), "a local room starts at level 1");
+        for (let i = 1; i <= targets.length; i++) {
+            laser(t, targets.slice(0, i).map(loopAround));
+            await t.flush();
+        }
+        assert.ok(bannerTexts(t.drawdy).includes("เจอครบ! · All found!"));
+        assert.deepEqual(t.drawdy.typesIssued().filter((type) => type.includes("storage")), []);
     });
 });

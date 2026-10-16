@@ -30,7 +30,6 @@ const DEFAULT_PLAYER_COLOR = "#698cf9";
 const REVEAL_MS = 3_000;
 const REVEAL_BLINK_MS = 250;
 const POP_SETTLE_MS = 1_200;
-const DIFFICULTY_KEY = "local-difficulty";
 /** A hunt zone smaller than this, in canvas units, grows about its centre so stamps stay findable. */
 const MIN_ZONE = 240;
 /** The viewport zone leaves this share of the view clear on each side, so the frame is visible. */
@@ -94,7 +93,6 @@ type Hunt = {
     subscriptions: string[];
     toolToRestore: string | null;
     ticker: ReturnType<typeof setInterval> | null;
-    savedDifficulty: number | null;
 };
 
 type Place = { kind: "join"; frameId: string; rect: Rect; meta: FrameMeta } | { kind: "new"; rect: Rect };
@@ -141,8 +139,6 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             throw error;
         }
 
-        const local = place.kind === "new" ? BACKEND_URL === null : place.meta.backendUrl === null;
-        const difficulty = local ? await loadDifficulty() : 1;
         const me = await whoAmI();
         const banner = await bannerSpot();
         const frame = place.kind === "join" ? place : await createFrame(place.rect);
@@ -154,7 +150,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             frameId: frame.frameId,
             meta: frame.meta,
             me,
-            host: hostFor(frame.meta, difficulty),
+            host: hostFor(frame.meta),
             snapshot: null,
             clockSkew: 0,
             taunt: null,
@@ -169,7 +165,6 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             subscriptions: [],
             toolToRestore: null,
             ticker: null,
-            savedDifficulty: local ? difficulty : null,
         };
         hunt = h;
         try {
@@ -262,12 +257,12 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         return { frameId, rect, meta };
     }
 
-    function hostFor(meta: FrameMeta, difficulty: number): HuntHost {
+    function hostFor(meta: FrameMeta): HuntHost {
         if (meta.backendUrl) return createRemoteHost({ backendUrl: meta.backendUrl, roomId: meta.roomId });
         // A local room lives as long as the driver, so reopening its frame resumes it.
         let host = localRooms.get(meta.roomId);
         if (!host) {
-            host = createLocalHost({ stampIds: STAMP_PACK.map((s) => s.id), difficulty });
+            host = createLocalHost({ stampIds: STAMP_PACK.map((s) => s.id) });
             localRooms.set(meta.roomId, host);
         }
         return host;
@@ -301,17 +296,6 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         return { playerId: guestId, name: "You", color: DEFAULT_PLAYER_COLOR };
     }
 
-    async function loadDifficulty(): Promise<number> {
-        try {
-            const { got } = await send({ type: "command:kv-storage:get", req: { key: DIFFICULTY_KEY } });
-            const value = got?.difficulty;
-            return typeof value === "number" && Number.isFinite(value) && value >= 1 ? Math.floor(value) : 1;
-        } catch (error) {
-            warn("stored difficulty unavailable; starting at 1:", error instanceof Error ? error.message : error);
-            return 1;
-        }
-    }
-
     async function bannerSpot(): Promise<{ x: number; y: number } | null> {
         try {
             const { width } = await send({ type: "command:dom:window-size" });
@@ -339,13 +323,6 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         log(
             `snapshot r${message.revision}: ${current ? `${current.status} ${current.id}` : "no round"}, difficulty ${message.room.difficulty}`
         );
-        if (h.savedDifficulty !== null && h.savedDifficulty !== message.room.difficulty) {
-            h.savedDifficulty = message.room.difficulty;
-            await quietly(
-                "saving difficulty",
-                send({ type: "command:kv-storage:set", req: { key: DIFFICULTY_KEY, payload: { difficulty: message.room.difficulty } } })
-            );
-        }
         await renderRound(h, current);
         if (current?.status === "ended") h.lastEnded = current;
         await quietly("writing found markers", markFinds(h, message));

@@ -35,8 +35,6 @@ const PERMISSIONS = {
     "command:tools:get-active": "scene",
     "command:tools:set-active": "scene",
     "subscription:tool:laser": "scene",
-    "command:kv-storage:get": "storage",
-    "command:kv-storage:set": "storage",
     "command:collaboration:get-all-users-in-board": "collaboration",
     "command:subscription:remove": "none",
 } as const satisfies Partial<ProtocolPermissionMap>;

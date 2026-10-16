@@ -4,6 +4,6 @@
     "driverVersion": "0.1.0",
     "description": "A hidden-object race on your own board. The host hides cats and numbers inside what your group drew, and everyone races to circle them with the laser.",
     "main": "main.js",
-    "permissions": ["dom", "scene", "collaboration", "storage"],
+    "permissions": ["dom", "scene", "collaboration"],
     "icon": "assets/icon.svg"
 }
