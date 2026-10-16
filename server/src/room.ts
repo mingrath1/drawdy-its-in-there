@@ -29,11 +29,11 @@ import {
   HuntDoc,
   huntHarnessOptions,
   HuntReceipts,
+  MAX_RECEIPTS,
   type OpenRoom,
   PlantNextRound,
   plain,
   publish,
-  receiptKey,
 } from "./durable.ts";
 import { KeyedSerialQueue } from "./serial.ts";
 import { momentOf, selectTauntHost, type TauntHost } from "./taunts.ts";
@@ -241,8 +241,8 @@ export class Room extends DurableObject<Env> {
       if (doc.open === null) throw new Error("The room does not exist");
       const before = plain<RoomState>(doc.open.room);
       const reconciled = expireRound(before, now);
-      const receipts = await tx.doc(HuntReceipts, receiptKey(player.playerId, command.requestId), null);
-      const stored = receipts.receipt;
+      const { receipts } = await tx.doc(HuntReceipts, player.playerId, null);
+      const stored = receipts.find((receipt) => receipt.requestId === command.requestId);
       if (stored !== undefined) {
         publish(doc.open, before, reconciled, this.#tauntFor(before, reconciled));
         return stored.fingerprint === fingerprint
@@ -258,7 +258,8 @@ export class Room extends DurableObject<Env> {
           background: true,
         });
       }
-      receipts.receipt = { fingerprint, command: command.type, code: step.code, revision: doc.open.revision };
+      receipts.push({ requestId: command.requestId, fingerprint, code: step.code, revision: doc.open.revision });
+      if (receipts.length > MAX_RECEIPTS) receipts.splice(0, receipts.length - MAX_RECEIPTS);
       return { kind: "applied", code: step.code, revision: doc.open.revision };
     }, context);
 

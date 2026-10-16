@@ -257,6 +257,29 @@ describe("rounds", () => {
     expect(growth).toBeLessThan(2_000);
   });
 
+  it("keeps a player's newest 512 receipts, so only an older retry runs again, and stops growing", async () => {
+    const keys = roomKeys();
+    const { client } = await joined(keys, alice);
+    let clock = Date.now();
+    // Each read moves the clock, so the rate limit refills between messages.
+    vi.spyOn(Date, "now").mockImplementation(() => (clock += 100));
+    const sendSets = async (from: number, to: number): Promise<number> => {
+      for (let i = from; i < to; i++) {
+        client.send({ v: 1, type: "difficulty.set", requestId: `set-${i}`, value: 1 + (i % 2) });
+      }
+      await client.waitFor(resultFor(`set-${to - 1}`));
+      return JSON.stringify(await storedRows(keys.roomId)).length;
+    };
+
+    const afterFirst = await sendSets(0, 600);
+    expect((await command(client, { type: "difficulty.set", value: 3 }, "set-88")).code).toBe("request-conflict");
+    expect((await command(client, { type: "difficulty.set", value: 3 }, "set-87")).code).toBe("ok");
+
+    const afterSecond = await sendSets(600, 1_200);
+    expect(afterSecond).toBeLessThan(afterFirst * 1.25);
+    client.close();
+  });
+
   it("answers request-conflict when a requestId returns with a changed payload", async () => {
     const { client } = await joined(roomKeys(), alice);
     const round = await startLive(client);

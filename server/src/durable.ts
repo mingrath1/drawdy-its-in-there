@@ -1,6 +1,7 @@
 import type { Draft } from "@earendil-works/chord";
 import { createModels } from "@earendil-works/pi-ai/models";
 import {
+  type CheckpointInfo,
   createRegistry,
   defineDoc,
   defineDocFamily,
@@ -10,8 +11,12 @@ import {
 } from "@earendil-works/pi-durable";
 import type { PlantRequest, Room } from "../../src/shared/hunt.ts";
 import { plant } from "../../src/shared/placement.ts";
-import type { CommandType, ResultCode } from "../../src/shared/protocol.ts";
+import type { ResultCode } from "../../src/shared/protocol.ts";
 import { plantFinished } from "../../src/shared/rules.ts";
+
+/** Storage keeps every change as a delta until a base replaces them, so store a base now and then. */
+const rebase = (_value: unknown, _ops: unknown, { deltasSinceBase }: CheckpointInfo): boolean =>
+  deltasSinceBase >= 64;
 
 /** `revision` orders snapshots; `taunt` is the line for the change that produced this revision. */
 export type OpenRoom = { revision: number; taunt: string | null; room: Room };
@@ -22,26 +27,23 @@ export const HuntDoc = defineDoc<{ open: OpenRoom | null }>({
   version: 1,
   scope: "session",
   initial: () => ({ open: null }),
+  checkpointWhen: rebase,
 });
 
-export type Receipt = {
-  fingerprint: string;
-  command: CommandType;
-  code: ResultCode;
-  revision: number;
-};
+export type Receipt = { requestId: string; fingerprint: string; code: ResultCode; revision: number };
 
-export const HuntReceipts = defineDocFamily<{ receipt?: Receipt }, null>({
+/** A retry of a request older than the player's newest MAX_RECEIPTS runs again. */
+export const MAX_RECEIPTS = 512;
+
+/** One player's newest receipts, oldest first, keyed by playerId, so two players can use the same requestId. */
+export const HuntReceipts = defineDocFamily<{ receipts: Receipt[] }, null>({
   family: true,
-  kind: "app.hunt-receipt",
+  kind: "app.hunt-receipts",
   version: 1,
   scope: "session",
-  initial: () => ({}),
+  initial: () => ({ receipts: [] }),
+  checkpointWhen: rebase,
 });
-
-/** A receipt belongs to one player, so two players can use the same requestId. */
-export const receiptKey = (playerId: string, requestId: string): string =>
-  JSON.stringify([playerId, requestId]);
 
 /** A plain copy of a draft or snapshot, safe to keep after its commit settles. */
 export const plain = <T>(value: Draft<T> | Readonly<T>): T => JSON.parse(JSON.stringify(value));
