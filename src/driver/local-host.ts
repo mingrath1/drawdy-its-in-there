@@ -3,7 +3,7 @@
 // snapshot per change, a result per command, and stored receipts so a replayed requestId gets
 // its original answer. Planting is synchronous here, and a timer ends the round at its deadline.
 
-import { bundledTaunts, momentOf } from "../../server/src/taunts.ts";
+import { bundledTaunts, momentOf } from "../shared/taunts.ts";
 import type { Room } from "../shared/hunt.ts";
 import { plant } from "../shared/placement.ts";
 import { MAX_DIFFICULTY, MIN_DIFFICULTY, PROTOCOL_VERSION, commandFingerprint, isCommand, toWire } from "../shared/protocol.ts";
