@@ -745,6 +745,35 @@ describe("driver", () => {
         assert.ok(shown.batch.every((e: any) => e.strokeColor === "#22c55e" && e.strokeWidth === 3), "every line in Ben's colour");
     });
 
+    it("recolours a find whose recolour failed when a snapshot repeats, and never reveals it as missed", async () => {
+        const t = setup();
+        const room = await joinRemote(t, live());
+        const [t0, t1, t2] = drawnTargets(t.drawdy);
+        const recolours = (d: typeof t0) => (r: any) =>
+            r.type === "command:scene:update-drawdy-preview-elements" && r.req.elements[0].drawdyElementId === d.batch[0].drawdyElementId;
+        const shownIn = (d: typeof t0, color: string) => drawnLike(t.drawdy, d)?.batch.every((e: any) => e.strokeColor === color);
+        const ben = (i: number) => findBy(i, "u-ben", "Ben", "#22c55e");
+
+        t.failOnce(recolours(t0));
+        room.snapshot(live("round-9", undefined, [ben(0)]), { revision: 2 });
+        await t.flush();
+        assert.ok(shownIn(t0, "#e4e4e7"), "the recolour failed");
+        room.snapshot(live("round-9", undefined, [ben(0)]), { revision: 2 });
+        await t.flush();
+        assert.ok(shownIn(t0, "#22c55e"), "a reconnect repeating the revision recolours it");
+
+        t.failOnce(recolours(t1));
+        t.failOnce(recolours(t1));
+        room.snapshot(live("round-9", undefined, [ben(0), ben(1)]), { revision: 3 });
+        room.snapshot(ended(live("round-9"), "time-up", [ben(0), ben(1)]), { revision: 4 });
+        await t.flush();
+        assert.ok(shownIn(t1, "#e4e4e7"), "a find whose recolour failed twice is not revealed as missed");
+        assert.ok(shownIn(t2, "#ef4444"), "the missed one is");
+        room.snapshot(ended(live("round-9"), "time-up", [ben(0), ben(1)]), { revision: 4 });
+        await t.flush();
+        assert.ok(shownIn(t1, "#22c55e"), "and the repeated revision recolours it");
+    });
+
     it("writes a marker whose write failed on the next snapshot", async () => {
         const t = setup();
         const room = await joinRemote(t, live());

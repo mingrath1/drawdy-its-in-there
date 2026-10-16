@@ -126,10 +126,14 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         queue = queue.then(task).catch((error) => warn(`${label} failed:`, error instanceof Error ? error.message : error));
     };
     const withHunt = (task: (h: Hunt) => Promise<void>) => () => (hunt ? task(hunt) : Promise.resolve());
+    /** Warns instead of throwing, and resolves whether the work succeeded. */
     const quietly = (label: string, work: Promise<unknown>) =>
         work.then(
-            () => undefined,
-            (error) => warn(`${label} failed:`, error instanceof Error ? error.message : error)
+            () => true,
+            (error) => {
+                warn(`${label} failed:`, error instanceof Error ? error.message : error);
+                return false;
+            }
         );
     const nextRequestId = () => `c-${Date.now().toString(36)}-${requestSeq++}`;
 
@@ -360,7 +364,10 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
      */
     async function repair(h: Hunt, snapshot: Snapshot) {
         const current = snapshot.room.current;
-        if (h.round && current?.status === "live" && current.id === h.round.id) await drawMissing(h.round);
+        if (h.round && (current?.status === "live" || current?.status === "ended") && current.id === h.round.id) {
+            if (current.status === "live") await drawMissing(h.round);
+            await paintFinds(h.round, current.finds);
+        }
         await quietly("writing found markers", markFinds(h, snapshot));
     }
 
@@ -509,9 +516,9 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
     async function paintFinds(view: RoundView, finds: Find[]) {
         for (const find of finds) {
             if (view.painted.has(find.targetId)) continue;
-            view.painted.add(find.targetId);
             const tv = view.targets.get(find.targetId);
-            if (tv) await quietly("recolouring a find", paint(view, tv, find.playerColor, tv.planted.strokeWidth * 1.5));
+            if (tv && !(await quietly("recolouring a find", paint(view, tv, find.playerColor, tv.planted.strokeWidth * 1.5)))) continue;
+            view.painted.add(find.targetId);
             log(`found ${find.targetId} by ${find.playerName}`);
         }
     }
@@ -521,7 +528,8 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         stopTicker(h);
         await quietly("restoring the tool", restoreTool(h));
         log(`round ${round.id} ended (${round.reason}): ${round.finds.length}/${round.targets.length} found`);
-        const missed = [...view.targets.values()].filter((tv) => !view.painted.has(tv.planted.id));
+        const found = new Set(round.finds.map((f) => f.targetId));
+        const missed = [...view.targets.values()].filter((tv) => !found.has(tv.planted.id));
         if (missed.length === 0) return;
         for (const tv of missed) await quietly("revealing a target", paint(view, tv, MISSED_COLOR));
         let blinks = 0;
