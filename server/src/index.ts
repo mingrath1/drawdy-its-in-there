@@ -1,32 +1,40 @@
-export { Session } from "./session.ts";
+export { Room } from "./room.ts";
 
-const json = (body: unknown, status: number, headers?: HeadersInit): Response =>
-  Response.json(body, { status, headers });
+// Drawdy runs drivers in a worker whose origin is `null`, so CORS allows any origin. The join token is the gate.
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
 
-const sessionSocketRoute = /^\/api\/sessions\/([^/]+)\/?$/;
+const json = (body: unknown, status: number, headers?: Record<string, string>): Response =>
+  Response.json(body, { status, headers: { ...CORS_HEADERS, ...headers } });
+
+const roomSocketRoute = /^\/api\/rooms\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/?$/;
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
-    if (url.pathname === "/api/sessions" || url.pathname === "/api/sessions/") {
+    if (url.pathname === "/api/rooms" || url.pathname === "/api/rooms/") {
+      if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS });
       if (request.method !== "POST") {
-        return json({ error: "Method not allowed" }, 405, { Allow: "POST" });
+        return json({ error: "Method not allowed" }, 405, { Allow: "POST, OPTIONS" });
       }
-      const sessionId = crypto.randomUUID();
-      return json({ sessionId, url: `/sessions/${sessionId}` }, 201);
+      const roomId = crypto.randomUUID();
+      const { token } = await env.ROOMS.getByName(roomId).create(roomId);
+      return json({ roomId, token }, 201);
     }
 
-    const sessionMatch = sessionSocketRoute.exec(url.pathname);
-    if (sessionMatch !== null) {
+    const roomMatch = roomSocketRoute.exec(url.pathname);
+    if (roomMatch !== null) {
       if (request.method !== "GET") {
         return json({ error: "Method not allowed" }, 405, { Allow: "GET" });
       }
       if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
         return json({ error: "WebSocket upgrade required" }, 426, { Upgrade: "websocket" });
       }
-      // Demo-only surface: authenticate and rate limit before exposing model-backed rooms publicly.
-      return env.SESSIONS.getByName(sessionMatch[1]).fetch(request);
+      return env.ROOMS.getByName(roomMatch[1]!).fetch(request);
     }
 
     return json({ error: "Not found" }, 404);
