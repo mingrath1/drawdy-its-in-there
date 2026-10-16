@@ -50,6 +50,12 @@ export function domSchemaProblems(schema: unknown, path = "root"): string[] {
     if (typeof type !== "string" || !(type in EXTRA_STYLES)) return [`${path}: unknown type ${String(type)}`];
 
     const problems: string[] = [];
+    const content = type === "text" || type === "image" || type === "iframe" ? "child" : "children";
+    for (const [key, value] of Object.entries(schema)) {
+        if (value !== undefined && key !== "type" && key !== "domId" && key !== "styles" && key !== content) {
+            problems.push(`${path}.${key}: not a key of ${type}`);
+        }
+    }
     const allowed = { ...BASE_STYLES, ...EXTRA_STYLES[type] };
     if (schema.styles !== undefined) {
         if (!record(schema.styles)) problems.push(`${path}.styles: not an object`);

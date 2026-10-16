@@ -36,4 +36,22 @@ describe("domSchemaProblems", () => {
         assert.ok(problems[2].startsWith("root.children[2].styles.gap"));
         assert.ok(problems[3].startsWith("root.children[3].child"));
     });
+
+    it("catches keys that do not belong to the node's type", () => {
+        const problems = domSchemaProblems({
+            type: "column",
+            child: "stray",
+            children: [
+                { type: "text", child: "x", children: [] },
+                { type: "box", label: "Go" },
+                { type: "iframe", child: { srcDoc: "<p></p>" }, children: [] },
+            ],
+        });
+        assert.deepEqual(problems, [
+            "root.child: not a key of column",
+            "root.children[0].children: not a key of text",
+            "root.children[1].label: not a key of box",
+            "root.children[2].children: not a key of iframe",
+        ]);
+    });
 });
