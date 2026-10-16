@@ -1,5 +1,5 @@
 // One player's hunt: find or create the hunt frame, open its room through a HuntHost, render
-// every snapshot, judge laser strokes, and write the found marker for our own winning claims.
+// every snapshot, judge laser strokes, and keep a found marker on the board for each of our finds.
 // Every event runs through one queue, so handlers never interleave.
 
 import type { DriverSubscriptionEvent, ModuleStyling, SubscribedDrawdyElement } from "@drawdy/driver-protocol";
@@ -63,7 +63,7 @@ type RoundView = {
 
 type Played = Extract<WireRound, { status: "live" | "ended" }>;
 
-/** A find of ours that needs its marker: the tag, and the target where it was planted in the frame's rect back then. */
+/** A find of ours that needs a marker: its tag, its target as planted, and the frame's rect at planting. */
 type Mark = { tag: string; target: Target; plantedIn: Rect };
 
 type Hunt = {
@@ -88,6 +88,7 @@ type Hunt = {
     strokes: Set<string> | null;
     /** find.claim requests in flight, so a target is not claimed twice while the room decides. */
     claims: Map<string, { roundId: string; targetId: string }>;
+    /** The last round seen ending, so a marker for a find in it is still written after the next round starts. */
     lastEnded: Extract<WireRound, { status: "ended" }> | null;
     banner: { x: number; y: number } | null;
     subscriptions: string[];
@@ -364,7 +365,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             // Targets are drawn only for a live round; one already over when we arrive stays hidden.
             if (current.status !== "live") return;
             h.round = await drawRound(h, current);
-            await toLaser(h);
+            await quietly("switching to the laser", toLaser(h));
             startTicker(h);
             if (h.offerBoard) {
                 h.host.send({ v: PROTOCOL_VERSION, type: "board.offer", requestId: nextRequestId(), afterRoundId: current.id, board: h.offerBoard });
@@ -505,7 +506,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         const view = h.round;
         const current = h.snapshot?.room.current;
         if (fresh.length === 0 || !view || view.ended || current?.status !== "live" || current.id !== view.id) return;
-        await followFrame(h, view);
+        await quietly("following the hunt frame", followFrame(h, view));
 
         const taken = new Set(current.finds.map((f) => f.targetId));
         for (const claim of h.claims.values()) if (claim.roundId === view.id) taken.add(claim.targetId);
@@ -606,7 +607,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         h.ticker = setInterval(
             () =>
                 enqueue("countdown", async () => {
-                    if (h.round && !h.round.ended) await followFrame(h, h.round);
+                    if (h.round && !h.round.ended) await quietly("following the hunt frame", followFrame(h, h.round));
                     await renderBanner(h);
                 }),
             1_000

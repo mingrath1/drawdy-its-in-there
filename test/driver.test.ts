@@ -697,4 +697,26 @@ describe("driver", () => {
         await t.flush();
         assert.ok(bannerTexts(t.drawdy).includes("เริ่ม · Start (Lv 3)"), "a level chosen before the first round");
     });
+
+    it("still judges a stroke where the targets last were when the frame cannot be read", async () => {
+        const t = setup();
+        const room = await joinRemote(t, live());
+        t.failOnce((r) => r.type === "command:scene:element-rects");
+        laser(t, [circleTarget(0)]);
+        await t.flush();
+        assert.deepEqual(room.sent("find.claim").map((c) => c.targetId), ["t0"]);
+    });
+
+    it("runs the round and its countdown even when switching to the laser fails", async () => {
+        const t = setup();
+        t.failOnce((r) => r.type === "command:tools:get-active");
+        await joinRemote(t, live());
+        assert.equal(drawnTargets(t.drawdy).length, 3);
+        assert.ok(bannerTexts(t.drawdy).includes("หาของที่ซ่อนอยู่ 3 ชิ้น · Find 3 hidden things"));
+        const upserts = () => t.drawdy.commands.filter((c) => c.type === "command:dom:upsert-floating-element").length;
+        const before = upserts();
+        mock.timers.tick(1_000);
+        await t.flush();
+        assert.equal(upserts(), before + 1, "the countdown ticks");
+    });
 });
