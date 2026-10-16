@@ -1,59 +1,71 @@
 Local end-to-end run: two players' RemoteHosts against wrangler dev, no browser.
 
-Branch iit-fix-driver at 089f9fe (main 89f85fd plus the driver fixes), 2026-10-16T20:31:50Z.
-Server:  cd server && npx wrangler dev --port 8799 --inspector-port 9339 --ip 127.0.0.1 --persist-to /tmp/iit-e2e/state
+Branch iit-fix-r2 at c186858 (main 89c773a plus the review round 2 fixes), 2026-10-16T22:56:29Z.
+Server:  cd server && npx wrangler dev --port 8799 --inspector-port 9339 --ip 127.0.0.1 --persist-to /tmp/iit-e2e/state2
 Client:  node /tmp/iit-e2e/e2e.mjs <worktree> http://127.0.0.1:8799
 The client imports the driver's own src/driver/remote-host.ts and src/shared/protocol.ts and uses Node's built-in WebSocket.
 
+Changed since the last run: the round and the full-league check are unchanged, since a full league still
+sends "full". A new last section holds 32 listed players online and checks that a 33rd is told
+"unavailable", keeps its open pending past the 15 s open timeout, and gets in after the room's
+retryAfterMs once a place frees.
+
 ---- transcript ----
 [+   1 ms] backend http://127.0.0.1:8799, node v26.12.0, protocol v1
-[+   1 ms] joinToken 20790752cf80…, roomId = deriveRoomId(joinToken) = a3a59e71e9f219cca0fac1019c183b2c0a31498cbae0b274772a87a3f0e1439e
-[+  26 ms] Ana <- snapshot r1: no round, difficulty 1, nextDifficulty 1, league [Ana 0]
-[+  30 ms] Ana <- snapshot r2: no round, difficulty 1, nextDifficulty 1, league [Ana 0, Ben 0]
-[+  30 ms] Ben <- snapshot r2: no round, difficulty 1, nextDifficulty 1, league [Ana 0, Ben 0]
-[+  30 ms] PASS both hellos admitted with the token-derived room id
-[+  30 ms] Ana -> round.start (ana-0)
-[+  33 ms] Ben <- snapshot r3: live 1cb8da2e finds 0/3, difficulty 1, nextDifficulty 1, league [Ana 0, Ben 0]
-[+  33 ms] Ana <- snapshot r3: live 1cb8da2e finds 0/3, difficulty 1, nextDifficulty 1, league [Ana 0, Ben 0]
-[+  33 ms] Ana <- result round.start ana-0 -> ok (r3)
-[+  33 ms] PASS round.start answered ok
-[+  33 ms] PASS both players see live round 1cb8da2e with 3 targets
-[+  33 ms] PASS level 1 plays 3 targets
-[+  33 ms] Ana -> find.claim 1cb8da2e-b069-4476-bc46-2e0a13ac1cc1:0 (ana-1)
-[+  35 ms] Ben <- snapshot r4: live 1cb8da2e finds 1/3, difficulty 1, nextDifficulty 1, league [Ana 1, Ben 0]
-[+  35 ms] Ana <- snapshot r4: live 1cb8da2e finds 1/3, difficulty 1, nextDifficulty 1, league [Ana 1, Ben 0]
-[+  36 ms] Ana <- result find.claim ana-1 -> ok (r4)
-[+  36 ms] PASS Ana claims 1cb8da2e-b069-4476-bc46-2e0a13ac1cc1:0: ok
-[+  36 ms] Ben -> find.claim 1cb8da2e-b069-4476-bc46-2e0a13ac1cc1:0 (ben-0)
-[+  37 ms] Ben <- result find.claim ben-0 -> taken (r4)
-[+  37 ms] PASS Ben claims 1cb8da2e-b069-4476-bc46-2e0a13ac1cc1:0: taken
-[+  37 ms] Ben -> find.claim 1cb8da2e-b069-4476-bc46-2e0a13ac1cc1:1 (ben-1)
-[+  39 ms] Ben <- snapshot r5: live 1cb8da2e finds 2/3, difficulty 1, nextDifficulty 1, league [Ana 1, Ben 1]
-[+  39 ms] Ana <- snapshot r5: live 1cb8da2e finds 2/3, difficulty 1, nextDifficulty 1, league [Ana 1, Ben 1]
-[+  39 ms] Ben <- result find.claim ben-1 -> ok (r5)
-[+  39 ms] PASS Ben claims 1cb8da2e-b069-4476-bc46-2e0a13ac1cc1:1: ok
-[+  39 ms] Ana -> find.claim 1cb8da2e-b069-4476-bc46-2e0a13ac1cc1:2 (ana-2)
-[+  40 ms] Ben <- snapshot r6: ended 1cb8da2e finds 3/3 all-found, difficulty 1, nextDifficulty 2, league [Ana 2, Ben 1]
-[+  40 ms] Ana <- snapshot r6: ended 1cb8da2e finds 3/3 all-found, difficulty 1, nextDifficulty 2, league [Ana 2, Ben 1]
-[+  40 ms] Ana <- result find.claim ana-2 -> ok (r6)
-[+  40 ms] PASS Ana claims 1cb8da2e-b069-4476-bc46-2e0a13ac1cc1:2: ok
-[+  40 ms] PASS room.difficulty stays the level just played, 1
-[+  40 ms] PASS room.nextDifficulty is 2 after all-found
-[+  40 ms] Ben -> find.claim 1cb8da2e-b069-4476-bc46-2e0a13ac1cc1:0 (ben-2)
-[+  42 ms] Ben <- result find.claim ben-2 -> not-live (r6)
-[+  42 ms] PASS a claim after all-found answers not-live
-[+  42 ms] Ana and Ben closed
-[+1462 ms] players 3..256 each opened and closed
+[+   1 ms] joinToken a1a95f0dec91…, roomId = deriveRoomId(joinToken) = ebdf1875d057de2a7b6b7e1b8247636a8b4d2371e987cfaeaab15614ecf83e08
+[+  31 ms] Ana <- snapshot r1: no round, difficulty 1, nextDifficulty 1, league [Ana 0]
+[+  36 ms] Ana <- snapshot r2: no round, difficulty 1, nextDifficulty 1, league [Ana 0, Ben 0]
+[+  36 ms] Ben <- snapshot r2: no round, difficulty 1, nextDifficulty 1, league [Ana 0, Ben 0]
+[+  36 ms] PASS both hellos admitted with the token-derived room id
+[+  36 ms] Ana -> round.start (ana-0)
+[+  41 ms] Ben <- snapshot r3: live 9d059203 finds 0/3, difficulty 1, nextDifficulty 1, league [Ana 0, Ben 0]
+[+  41 ms] Ana <- snapshot r3: live 9d059203 finds 0/3, difficulty 1, nextDifficulty 1, league [Ana 0, Ben 0]
+[+  41 ms] Ana <- result round.start ana-0 -> ok (r3)
+[+  41 ms] PASS round.start answered ok
+[+  41 ms] PASS both players see live round 9d059203 with 3 targets
+[+  41 ms] PASS level 1 plays 3 targets
+[+  41 ms] Ana -> find.claim 9d059203-049b-4e13-80b8-fbbb22e91038:0 (ana-1)
+[+  44 ms] Ben <- snapshot r4: live 9d059203 finds 1/3, difficulty 1, nextDifficulty 1, league [Ana 1, Ben 0]
+[+  44 ms] Ana <- snapshot r4: live 9d059203 finds 1/3, difficulty 1, nextDifficulty 1, league [Ana 1, Ben 0]
+[+  44 ms] Ana <- result find.claim ana-1 -> ok (r4)
+[+  44 ms] PASS Ana claims 9d059203-049b-4e13-80b8-fbbb22e91038:0: ok
+[+  44 ms] Ben -> find.claim 9d059203-049b-4e13-80b8-fbbb22e91038:0 (ben-0)
+[+  46 ms] Ben <- result find.claim ben-0 -> taken (r4)
+[+  46 ms] PASS Ben claims 9d059203-049b-4e13-80b8-fbbb22e91038:0: taken
+[+  46 ms] Ben -> find.claim 9d059203-049b-4e13-80b8-fbbb22e91038:1 (ben-1)
+[+  48 ms] Ben <- snapshot r5: live 9d059203 finds 2/3, difficulty 1, nextDifficulty 1, league [Ana 1, Ben 1]
+[+  48 ms] Ana <- snapshot r5: live 9d059203 finds 2/3, difficulty 1, nextDifficulty 1, league [Ana 1, Ben 1]
+[+  48 ms] Ben <- result find.claim ben-1 -> ok (r5)
+[+  48 ms] PASS Ben claims 9d059203-049b-4e13-80b8-fbbb22e91038:1: ok
+[+  48 ms] Ana -> find.claim 9d059203-049b-4e13-80b8-fbbb22e91038:2 (ana-2)
+[+  50 ms] Ben <- snapshot r6: ended 9d059203 finds 3/3 all-found, difficulty 1, nextDifficulty 2, league [Ana 2, Ben 1]
+[+  50 ms] Ana <- snapshot r6: ended 9d059203 finds 3/3 all-found, difficulty 1, nextDifficulty 2, league [Ana 2, Ben 1]
+[+  50 ms] Ana <- result find.claim ana-2 -> ok (r6)
+[+  50 ms] PASS Ana claims 9d059203-049b-4e13-80b8-fbbb22e91038:2: ok
+[+  50 ms] PASS room.difficulty stays the level just played, 1
+[+  50 ms] PASS room.nextDifficulty is 2 after all-found
+[+  50 ms] Ben -> find.claim 9d059203-049b-4e13-80b8-fbbb22e91038:0 (ben-2)
+[+  52 ms] Ben <- result find.claim ben-2 -> not-live (r6)
+[+  52 ms] PASS a claim after all-found answers not-live
+[+  52 ms] Ana and Ben closed
+[+1202 ms] players 3..256 each opened and closed
 [iit] room refused this player (full); not reconnecting
-[+1470 ms] P257 <- fault full
-[+1470 ms] PASS player 257's RemoteHost open rejects with fault full after 8 ms, not the 15 s open timeout
-[+2473 ms] PASS it dialed once and did not redial
-[+2481 ms] PASS Ana, already listed, still rejoins the full league
-[+2481 ms] done
+[+1208 ms] P257 <- fault full
+[+1208 ms] PASS player 257's RemoteHost open rejects with fault full after 6 ms, not the 15 s open timeout
+[+2210 ms] PASS it dialed once and did not redial
+[+2230 ms] PASS Ana, already listed, still rejoins the full league
+[+2342 ms] players 3..34 are online at once, 32 listed players
+[+2344 ms] p35 <- fault unavailable, retryAfterMs 60000
+[+4345 ms] PASS p35, listed but one over the online cap, is told unavailable, not full
+[+4345 ms] PASS its RemoteHost keeps its open pending and has not redialed yet
+[+4345 ms] p3 goes offline
+[+62365 ms] PASS it redialed once and got in 60023 ms after its first dial
+[+62365 ms] PASS no sooner than the room's retryAfterMs, past the 15 s open timeout
+[+62366 ms] done
 exit code 0
 
 ---- e2e.mjs ----
-// Two players' RemoteHosts, the driver's own src/driver/remote-host.ts, play one round against `wrangler dev`.
+// Two players' RemoteHosts, the driver's own src/driver/remote-host.ts, play one round against `wrangler dev`, then fill the league and the online cap.
 // Usage: node e2e.mjs <worktree> <backendUrl>
 import { randomBytes } from "node:crypto";
 import { pathToFileURL } from "node:url";
@@ -183,5 +195,41 @@ await new Promise((resolve) => setTimeout(resolve, 1_000));
 check(extra.dials() === 1, "it dialed once and did not redial");
 const back = await join("ana");
 check(back.outcome === "opened", "Ana, already listed, still rejoins the full league");
+
+const MAX_PLAYERS_ONLINE = 32;
+const helloFor = (who) => ({ v: 1, type: "hello", roomId, joinToken, player: { playerId: `e2e-${who}`, name: who, color: "#698cf9" } });
+const online = [];
+for (let i = 3; i < 3 + MAX_PLAYERS_ONLINE; i++) {
+    const host = createRemoteHost({ backendUrl, roomId });
+    await host.open(helloFor(`p${i}`), () => {});
+    online.push(host);
+}
+out(`players 3..${2 + MAX_PLAYERS_ONLINE} are online at once, ${MAX_PLAYERS_ONLINE} listed players`);
+const busyWho = `p${3 + MAX_PLAYERS_ONLINE}`;
+let busyDials = 0;
+let openedAt = null;
+const faults = [];
+const busy = createRemoteHost({ backendUrl, roomId, connect: (url) => (busyDials++, new WebSocket(url)) });
+const t1 = Date.now();
+const busyOpen = busy
+    .open(helloFor(busyWho), (m) => {
+        if (m.type !== "fault") return;
+        faults.push(m);
+        out(`${busyWho} <- ${describe(m)}, retryAfterMs ${m.retryAfterMs}`);
+    })
+    .then(
+        () => ((openedAt = Date.now()), "opened"),
+        (error) => error.code,
+    );
+await new Promise((resolve) => setTimeout(resolve, 2_000));
+check(faults.length === 1 && faults[0].code === "unavailable", `${busyWho}, listed but one over the online cap, is told unavailable, not full`);
+check(busyDials === 1 && openedAt === null, "its RemoteHost keeps its open pending and has not redialed yet");
+online.shift().close();
+out("p3 goes offline");
+const busyOutcome = await busyOpen;
+check(busyOutcome === "opened" && busyDials === 2, `it redialed once and got in ${openedAt - t1} ms after its first dial`);
+check(openedAt - t1 >= faults[0].retryAfterMs, `no sooner than the room's retryAfterMs, past the 15 s open timeout`);
+busy.close();
+for (const host of online) host.close();
 out("done");
 process.exit(0);
