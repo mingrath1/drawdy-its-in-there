@@ -411,4 +411,38 @@ describe("driver", () => {
         assert.deepEqual(drawdy.typesIssued().slice(2), ["command:scene:get-current-selected-drawdy-elements"]);
         assert.equal(warnings.length, 1);
     });
+
+    it("leaves the hunt when setup fails after it began, so the next click starts over", async () => {
+        const t = setup();
+        scribbleBoard(t.drawdy);
+        await t.driver.activate();
+        t.failOnce((r) => r.type === "command:dom:upsert-floating-element");
+        t.drawdy.click(t.onEvent, ACTION);
+        await t.flush();
+        assert.equal(t.drawdy.floating.size, 0);
+        assert.ok(![...t.drawdy.subscriptions.values()].some((s) => s.type === "subscription:tool:laser"), "its subscriptions are gone");
+
+        t.drawdy.click(t.onEvent, ACTION);
+        await t.flush();
+        assert.equal(frames(t.drawdy).length, 1, "the second click joins the frame the first one made");
+        assert.equal(drawnTargets(t.drawdy).length, targetCount(1));
+        assert.ok(bannerTexts(t.drawdy).includes("หาของที่ซ่อนอยู่ 3 ชิ้น · Find 3 hidden things"));
+    });
+
+    it("leaves at once from the connecting banner and closes the room socket", async () => {
+        const t = setup();
+        t.drawdy.add({ id: "hunt-1", type: "frame", ...HUNT_FRAME, meta: { iit: REMOTE_META } });
+        await t.driver.activate();
+        t.drawdy.click(t.onEvent, ACTION);
+        await pump(() => sockets.length > 0);
+        await pump(() => t.drawdy.floating.size > 0);
+        assert.ok(bannerTexts(t.drawdy).includes("กำลังเชื่อมต่อ… · Connecting…"));
+
+        t.drawdy.click(t.onEvent, STOP_BUTTON_ID);
+        await pump(() => t.drawdy.floating.size === 0);
+        assert.equal(t.drawdy.floating.size, 0, "the banner is gone");
+        assert.equal(sockets[0].readyState, 3, "the socket is closed");
+        mock.timers.tick(60_000);
+        assert.equal(sockets.length, 1, "nothing redials");
+    });
 });

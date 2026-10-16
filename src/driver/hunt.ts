@@ -153,17 +153,27 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             savedDifficulty: local ? difficulty : null,
         };
         hunt = h;
-        h.subscriptions = await subscribe(banner !== null);
-        await renderBanner(h);
         try {
-            await h.host.open(
+            h.subscriptions = await subscribe(banner !== null);
+            await renderBanner(h);
+        } catch (error) {
+            warn("could not set up the hunt:", error instanceof Error ? error.message : error);
+            await leave(h);
+            return;
+        }
+        // Not awaited: the queue stays free while the room connects, so Leave works at once.
+        h.host
+            .open(
                 { v: PROTOCOL_VERSION, type: "hello", roomId: h.meta.roomId, joinToken: h.meta.joinToken, player: me },
                 (message) => enqueue(`room ${message.type}`, () => onMessage(h, message))
+            )
+            .catch((error) =>
+                enqueue("opening the room", async () => {
+                    if (hunt !== h) return;
+                    warn("could not open the room:", error instanceof Error ? error.message : error);
+                    await leave(h);
+                })
             );
-        } catch (error) {
-            warn("could not open the room:", error instanceof Error ? error.message : error);
-            await leave(h);
-        }
     }
 
     async function findPlace(): Promise<Place> {
