@@ -62,8 +62,10 @@ type RoundView = {
     reveal: ReturnType<typeof setInterval> | null;
 };
 
-/** A find.claim in flight, with what its marker needs if the room confirms it. */
-type Claim = { roundId: string; target: Target; plantedIn: Rect };
+type Played = Extract<WireRound, { status: "live" | "ended" }>;
+
+/** A find of ours that needs its marker: the tag, and the target where it was planted in the frame's rect back then. */
+type Mark = { tag: string; target: Target; plantedIn: Rect };
 
 type Hunt = {
     frameId: string;
@@ -83,7 +85,9 @@ type Hunt = {
      * first laser event, whose earlier strokes were drawn before the hunt subscribed.
      */
     strokes: Set<string> | null;
-    claims: Map<string, Claim>;
+    /** find.claim requests in flight, so a target is not claimed twice while the room decides. */
+    claims: Map<string, { roundId: string; targetId: string }>;
+    lastEnded: Extract<WireRound, { status: "ended" }> | null;
     banner: { x: number; y: number } | null;
     subscriptions: string[];
     toolToRestore: string | null;
@@ -157,6 +161,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             round: null,
             strokes: null,
             claims: new Map(),
+            lastEnded: null,
             banner,
             subscriptions: [],
             toolToRestore: null,
@@ -338,6 +343,8 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             );
         }
         await renderRound(h, current);
+        if (current?.status === "ended") h.lastEnded = current;
+        await quietly("writing found markers", markFinds(h, message));
         if (h.startOnOpen) {
             h.startOnOpen = false;
             if (!isRunning(current)) await requestRound(h);
@@ -513,7 +520,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         await followFrame(h, view);
 
         const taken = new Set(current.finds.map((f) => f.targetId));
-        for (const claim of h.claims.values()) if (claim.roundId === view.id) taken.add(claim.target.id);
+        for (const claim of h.claims.values()) if (claim.roundId === view.id) taken.add(claim.targetId);
         for (const stroke of fresh) {
             const hits = [...view.targets.values()].filter(
                 (tv) => tv.previewId !== null && !taken.has(tv.planted.id) && judge({ points: stroke }, shifted(tv.planted, view.offset))
@@ -522,7 +529,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             for (const tv of hits) {
                 taken.add(tv.planted.id);
                 const requestId = nextRequestId();
-                h.claims.set(requestId, { roundId: view.id, target: tv.planted, plantedIn: view.frameRect });
+                h.claims.set(requestId, { roundId: view.id, targetId: tv.planted.id });
                 h.host.send({ v: PROTOCOL_VERSION, type: "find.claim", requestId, roundId: view.id, targetId: tv.planted.id });
             }
         }
@@ -535,24 +542,36 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             return;
         }
         h.claims.delete(result.requestId);
-        log(`claim on ${claim.target.id} answered ${result.code}`);
-        if (result.code === "ok") await writeMarker(h, claim);
+        log(`claim on ${claim.targetId} answered ${result.code}`);
     }
 
-    /** Only the winning claimant writes the marker, and only if no element carries its tag yet. */
-    async function writeMarker(h: Hunt, claim: Claim) {
-        const tag = foundTag(claim.roundId, claim.target.id);
+    /**
+     * Every find of ours in the current or last ended round gets a marker unless one with its tag is
+     * already in the frame. Run on each snapshot, so a failed write or a reload heals on the next one.
+     */
+    async function markFinds(h: Hunt, snapshot: Snapshot) {
+        const rounds = [snapshot.room.current, h.lastEnded].filter(
+            (r, i, all): r is Played => (r?.status === "live" || r?.status === "ended") && all.findIndex((o) => o?.id === r.id) === i
+        );
+        const due: Mark[] = rounds.flatMap((round) =>
+            round.finds.flatMap((find) => {
+                const target = round.targets.find((t) => t.id === find.targetId);
+                return find.playerId === snapshot.self && target ? [{ tag: foundTag(round.id, target.id), target, plantedIn: round.frameRect }] : [];
+            })
+        );
+        if (due.length === 0) return;
         const rect = await frameRect(h);
         if (!rect) {
-            warn(`marker ${tag} skipped: the hunt frame is gone`);
+            log("the hunt frame is gone; its found markers are skipped");
             return;
         }
-        const target = shifted(claim.target, offsetBetween(rect, claim.plantedIn));
         const { drawdyElements } = await send({ type: "command:scene:query-rect", req: { rect, properties: ["meta"] } });
-        if (drawdyElements.some((e) => e.meta?.iitFound === tag)) {
-            log(`marker ${tag} is already on the board`);
-            return;
-        }
+        const onBoard = new Set(drawdyElements.map((e) => e.meta?.iitFound));
+        for (const mark of due) if (!onBoard.has(mark.tag)) await writeMarker(h, rect, mark);
+    }
+
+    async function writeMarker(h: Hunt, rect: Rect, { tag, target: planted, plantedIn }: Mark) {
+        const target = shifted(planted, offsetBetween(rect, plantedIn));
         const id = ctx.generateId();
         await send({
             type: "command:scene:add-drawdy-elements",

@@ -393,6 +393,7 @@ describe("driver", () => {
         laser(t, strokes);
         await t.flush();
         assert.equal(room.answer("ok"), "t1");
+        room.snapshot(live("round-9", undefined, [findBy(0, "u-ben", "Ben", "#22c55e"), findBy(1)]));
         await t.flush();
         assert.deepEqual(markers(drawdy).map((m) => m.meta.iitFound), ["round-9:t1"]);
         assert.equal(markers(drawdy)[0].frameId, "hunt-1");
@@ -402,6 +403,7 @@ describe("driver", () => {
         laser(t, strokes);
         await t.flush();
         assert.equal(room.answer("ok"), "t2");
+        room.snapshot(live("round-9", undefined, [findBy(0, "u-ben", "Ben", "#22c55e"), findBy(1), findBy(2)]));
         await t.flush();
         assert.equal(markers(drawdy).filter((m) => m.meta.iitFound === "round-9:t2").length, 1, "an existing tag is not written twice");
 
@@ -587,5 +589,40 @@ describe("driver", () => {
         laser(t, [circleTarget(0), circleTarget(0, 1)]);
         await t.flush();
         assert.deepEqual(room.sent("find.claim").map((c) => c.targetId), ["t0"]);
+    });
+
+    it("writes a marker whose write failed on the next snapshot", async () => {
+        const t = setup();
+        const room = await joinRemote(t, live());
+        laser(t, [circleTarget(0)]);
+        await t.flush();
+        t.failOnce((r) => r.type === "command:scene:add-drawdy-elements");
+        room.answer("ok");
+        room.snapshot(live("round-9", undefined, [findBy(0)]));
+        await t.flush();
+        assert.equal(markers(t.drawdy).length, 0);
+        room.snapshot(live("round-9", undefined, [findBy(0)]));
+        await t.flush();
+        assert.deepEqual(markers(t.drawdy).map((m) => m.meta.iitFound), ["round-9:t0"]);
+    });
+
+    it("writes our missing markers when it joins a round, as after a reload", async () => {
+        const t = setup();
+        const finds = [findBy(1), findBy(2, "u-ben", "Ben", "#22c55e")];
+        const room = await joinRemote(t, live("round-9", undefined, finds));
+        assert.deepEqual(markers(t.drawdy).map((m) => m.meta.iitFound), ["round-9:t1"], "only our own find is marked");
+        room.snapshot(ended(live("round-9", undefined, finds), "time-up"));
+        await t.flush();
+        assert.equal(markers(t.drawdy).length, 1, "and only once");
+    });
+
+    it("still writes a missing marker from the last ended round after the next one starts", async () => {
+        const t = setup();
+        t.failOnce((r) => r.type === "command:scene:add-drawdy-elements");
+        const room = await joinRemote(t, ended(live("round-1"), "time-up", [findBy(0)]));
+        assert.equal(markers(t.drawdy).length, 0);
+        room.snapshot({ status: "planting", id: "round-2", frameRect: HUNT_FRAME });
+        await t.flush();
+        assert.deepEqual(markers(t.drawdy).map((m) => m.meta.iitFound), ["round-1:t0"]);
     });
 });
