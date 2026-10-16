@@ -48,8 +48,19 @@ export type HuntDriver = {
 
 type Offset = { dx: number; dy: number };
 
-/** `runs` are the stamp's strokes where it was planted. Every drawing shifts them by the round's offset. */
-type TargetView = { planted: Target; runs: Point[][]; ids: string[]; previewId: string | null; color: string; strokeWidth: number };
+/**
+ * `runs` are the stamp's strokes where it was planted. Every drawing shifts them by the round's offset.
+ * `drawn.at` is the offset the preview is known to show, so judging uses it. It trails the round's
+ * offset until a move goes through.
+ */
+type TargetView = {
+    planted: Target;
+    runs: Point[][];
+    ids: string[];
+    drawn: { previewId: string; at: Offset } | null;
+    color: string;
+    strokeWidth: number;
+};
 
 type RoundView = {
     id: string;
@@ -425,7 +436,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
                 continue;
             }
             const runs = stampRuns(stamp, planted);
-            view.targets.set(planted.id, { planted, runs, ids: [], previewId: null, color: planted.strokeColor, strokeWidth: planted.strokeWidth });
+            view.targets.set(planted.id, { planted, runs, ids: [], drawn: null, color: planted.strokeColor, strokeWidth: planted.strokeWidth });
         }
         await drawMissing(view);
         log(`round ${round.id} is live: drew ${view.targets.size} targets, frame offset (${view.offset.dx}, ${view.offset.dy})`);
@@ -435,15 +446,16 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
     /** A target without a preview is never judged. Each snapshot of a live round tries to draw it again. */
     async function drawMissing(view: RoundView) {
         for (const tv of view.targets.values()) {
-            if (tv.previewId) continue;
+            if (tv.drawn) continue;
             tv.ids = tv.runs.map(() => ctx.generateId());
+            const at = view.offset;
             try {
                 const { previewId, previewed } = await send({
                     type: "command:scene:create-drawdy-preview-elements",
-                    req: { elements: previewLines(tv.ids, placedRuns(view, tv), tv.color, tv.strokeWidth) },
+                    req: { elements: previewLines(tv.ids, placedRuns(tv, at), tv.color, tv.strokeWidth) },
                 });
                 if (previewed === tv.ids.length) {
-                    tv.previewId = previewId;
+                    tv.drawn = { previewId, at };
                     continue;
                 }
                 await quietly("removing a partly drawn target", send({ type: "command:scene:delete-drawdy-preview-elements", req: { previewIds: [previewId] } }));
@@ -454,25 +466,33 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         }
     }
 
+    /** Redraws the target at the round's offset. Its drawn offset moves only once every line has. */
     async function paint(view: RoundView, tv: TargetView, color: string, strokeWidth = tv.planted.strokeWidth) {
         tv.color = color;
         tv.strokeWidth = strokeWidth;
-        if (!tv.previewId) return;
-        await send({
+        const drawn = tv.drawn;
+        if (!drawn) return;
+        const at = view.offset;
+        const { updated } = await send({
             type: "command:scene:update-drawdy-preview-elements",
-            req: { elements: previewLines(tv.ids, placedRuns(view, tv), color, strokeWidth) },
+            req: { elements: previewLines(tv.ids, placedRuns(tv, at), color, strokeWidth) },
         });
+        if (updated !== tv.ids.length) throw new Error(`target ${tv.planted.id} updated ${updated} of ${tv.ids.length} lines`);
+        drawn.at = at;
     }
 
-    /** Moves the targets with the hunt frame, so drawing, judging, and markers agree on where they are. */
+    /** Moves the targets with the hunt frame. A target whose move failed is judged where it shows and moved on the next try. */
     async function followFrame(h: Hunt, view: RoundView) {
         const rect = await frameRect(h);
         if (!rect) return;
         const offset = offsetBetween(rect, view.frameRect);
-        if (offset.dx === view.offset.dx && offset.dy === view.offset.dy) return;
-        view.offset = offset;
-        log(`the hunt frame moved; targets follow at offset (${offset.dx}, ${offset.dy})`);
-        for (const tv of view.targets.values()) await quietly("moving a target", paint(view, tv, tv.color, tv.strokeWidth));
+        if (!sameOffset(offset, view.offset)) {
+            view.offset = offset;
+            log(`the hunt frame moved; targets follow at offset (${offset.dx}, ${offset.dy})`);
+        }
+        for (const tv of view.targets.values()) {
+            if (tv.drawn && !sameOffset(tv.drawn.at, offset)) await quietly("moving a target", paint(view, tv, tv.color, tv.strokeWidth));
+        }
     }
 
     async function paintFinds(view: RoundView, finds: Find[]) {
@@ -501,7 +521,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             const color = (tv: TargetView) => (done || blinks % 2 === 0 ? MISSED_COLOR : tv.planted.strokeColor);
             enqueue("reveal", async () => {
                 if (h.round !== view) return;
-                for (const tv of missed) await paint(view, tv, color(tv));
+                for (const tv of missed) await quietly("revealing a target", paint(view, tv, color(tv)));
             });
         }, REVEAL_BLINK_MS);
     }
@@ -513,7 +533,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         stopTicker(h);
         if (view?.reveal) clearInterval(view.reveal);
         await quietly("restoring the tool", restoreTool(h));
-        const previewIds = view ? [...view.targets.values()].flatMap((tv) => (tv.previewId ? [tv.previewId] : [])) : [];
+        const previewIds = view ? [...view.targets.values()].flatMap((tv) => (tv.drawn ? [tv.drawn.previewId] : [])) : [];
         if (previewIds.length > 0) {
             await quietly("removing targets", send({ type: "command:scene:delete-drawdy-preview-elements", req: { previewIds } }));
         }
@@ -541,7 +561,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         for (const claim of h.claims.values()) if (claim.roundId === view.id) taken.add(claim.targetId);
         for (const stroke of fresh) {
             const hits = [...view.targets.values()].filter(
-                (tv) => tv.previewId !== null && !taken.has(tv.planted.id) && judge({ points: stroke }, shifted(tv.planted, view.offset))
+                (tv) => tv.drawn !== null && !taken.has(tv.planted.id) && judge({ points: stroke }, shifted(tv.planted, tv.drawn.at))
             );
             log(`laser stroke of ${stroke.length} points: ${hits.length > 0 ? `hit ${hits.map((tv) => tv.planted.id).join(", ")}` : "miss"}`);
             for (const tv of hits) {
@@ -763,8 +783,12 @@ function offsetBetween(now: Rect, then: Rect): Offset {
     return { dx: now.x - then.x, dy: now.y - then.y };
 }
 
-function placedRuns(view: RoundView, tv: TargetView): Point[][] {
-    return tv.runs.map((run) => run.map(([x, y]): Point => [x + view.offset.dx, y + view.offset.dy]));
+function sameOffset(a: Offset, b: Offset): boolean {
+    return a.dx === b.dx && a.dy === b.dy;
+}
+
+function placedRuns(tv: TargetView, { dx, dy }: Offset): Point[][] {
+    return tv.runs.map((run) => run.map(([x, y]): Point => [x + dx, y + dy]));
 }
 
 /** A trail resends every visible stroke, so a stroke is known by its ends and its length. */

@@ -122,7 +122,16 @@ function setup(drawdy = new FakeDrawdy()) {
                 return { ...response, res: { value: rewrite(response.res.value) } };
             },
         });
-    return { drawdy, driver, onEvent, flush, failOnce, rewriteOnce };
+    /** The next command that matches never reaches the board, and is answered with this value. */
+    const answerOnce = (match: (request: any) => boolean, value: unknown) =>
+        overrides.push({
+            match,
+            answer: async (request) => {
+                drawdy.commands.push(request);
+                return { ...request, res: { value } };
+            },
+        });
+    return { drawdy, driver, onEvent, flush, failOnce, rewriteOnce, answerOnce };
 }
 
 /** Turns the event loop without waiting on the driver's queue, for when the queue itself may be stuck. */
@@ -601,6 +610,33 @@ describe("driver", () => {
         room.snapshot(live("round-9", undefined, [findBy(0), findBy(1)]));
         await t.flush();
         assert.equal(markers(t.drawdy).length, 1, "no marker once the frame is gone");
+    });
+
+    it("judges a target where it is drawn while moving it fails, and moves it on the next tick", async () => {
+        const t = setup();
+        const room = await joinRemote(t, live());
+        const before = drawnTargets(t.drawdy);
+        const t0Line = before[0].batch[0].drawdyElementId;
+        const movesT0 = (r: any) => r.type === "command:scene:update-drawdy-preview-elements" && r.req.elements[0].drawdyElementId === t0Line;
+        t.failOnce(movesT0);
+        t.answerOnce(movesT0, { updated: 0 });
+        const frame = t.drawdy.elements.get("hunt-1")!;
+        frame.x += 150;
+        frame.y += 80;
+        mock.timers.tick(1_000);
+        await t.flush();
+        const after = drawnTargets(t.drawdy);
+        assert.deepEqual([after[0].cx, after[0].cy], [before[0].cx, before[0].cy], "t0 failed to move");
+        assert.ok(Math.abs(after[1].cx - before[1].cx - 150) < 1e-6, "t1 moved");
+
+        laser(t, [circleTarget(0)]);
+        await t.flush();
+        assert.deepEqual(room.sent("find.claim").map((c) => c.targetId), ["t0"], "a circle around t0 where it shows finds it, after a retry that moved no line");
+
+        mock.timers.tick(1_000);
+        await t.flush();
+        const moved = drawnTargets(t.drawdy)[0];
+        assert.ok(Math.abs(moved.cx - before[0].cx - 150) < 1e-6 && Math.abs(moved.cy - before[0].cy - 80) < 1e-6, "the next tick moves it");
     });
 
     it("never claims a target whose preview failed, and draws it on the next snapshot", async () => {
