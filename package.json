@@ -9,7 +9,7 @@
         "dev": "vite",
         "build": "node build.ts",
         "typecheck": "tsc --noEmit",
-        "test": "node --test \"src/**/*.test.ts\""
+        "test": "node --test \"src/**/*.test.ts\" \"test/*.test.ts\" \"scripts/*.test.mjs\""
     },
     "devDependencies": {
         "@types/node": "^20",
