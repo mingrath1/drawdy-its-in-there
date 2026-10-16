@@ -18,6 +18,9 @@ export const BOARD_PROPERTIES = [
 ] satisfies SubscribeableKey[];
 
 const LIMIT = 1e7;
+/** Leaves room for the command envelope, whose two ids run to 128 characters each, so the encoded command stays within 240,000. */
+const MAX_BOARD_CHARS = 239_500;
+const round1 = (v: number) => Math.round(v * 10) / 10;
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && Math.abs(v) <= LIMIT;
 const usableColor = (v: unknown): v is string =>
     typeof v === "string" && v.length > 0 && v.length <= 64 && !/[\u0000-\u001f\u007f]/.test(v);
@@ -31,19 +34,21 @@ function isOurs(element: SubscribedDrawdyElement): boolean {
 export function boardSnapshot(frameRect: Rect, elements: readonly SubscribedDrawdyElement[]): BoardSnapshot {
     const kept = elements.filter((e) => e.type !== "frame" && !isOurs(e)).slice(0, MAX_BOARD_ITEMS);
     const strokes = kept.filter((e) => e.type === "freedraw" && Array.isArray(e.points)).length;
-    const pointBudget = Math.min(MAX_POINTS_PER_ITEM, Math.max(2, Math.floor(MAX_TOTAL_POINTS / Math.max(1, strokes))));
-    const items: BoardItem[] = [];
-    for (const element of kept) {
-        const item = toItem(element, pointBudget);
-        if (item) items.push(item);
+    let pointBudget = Math.min(MAX_POINTS_PER_ITEM, Math.max(2, Math.floor(MAX_TOTAL_POINTS / Math.max(1, strokes))));
+    let count = kept.length;
+    for (;;) {
+        const items = kept.slice(0, count).flatMap((element) => toItem(element, pointBudget) ?? []);
+        const board = { frameRect, items };
+        if (count === 0 || JSON.stringify(board).length <= MAX_BOARD_CHARS) return board;
+        if (pointBudget > 2) pointBudget = Math.max(2, Math.floor(pointBudget / 2));
+        else count = Math.floor(count / 2);
     }
-    return { frameRect, items };
 }
 
 function toItem(e: SubscribedDrawdyElement, pointBudget: number): BoardItem | null {
     if (!finite(e.x) || !finite(e.y) || !finite(e.width) || !finite(e.height)) return null;
     if (e.width < 0 || e.height < 0) return null;
-    const rect = { x: e.x, y: e.y, width: e.width, height: e.height };
+    const rect = { x: round1(e.x), y: round1(e.y), width: round1(e.width), height: round1(e.height) };
     const kind = kindOf(e);
     const item: BoardItem = { rect, kind };
 
@@ -53,7 +58,7 @@ function toItem(e: SubscribedDrawdyElement, pointBudget: number): BoardItem | nu
     if (inked && finite(e.strokeWidth) && e.strokeWidth >= 0 && e.strokeWidth <= 1000) item.strokeWidth = e.strokeWidth;
 
     if (kind === "freedraw" && Array.isArray(e.points)) {
-        const points = e.points.filter((p) => finite(p[0]) && finite(p[1])).map((p): [number, number] => [p[0], p[1]]);
+        const points = e.points.filter((p) => finite(p[0]) && finite(p[1])).map((p): [number, number] => [round1(p[0]), round1(p[1])]);
         if (points.length > 0) item.points = thin(points, pointBudget);
     }
     return item;
