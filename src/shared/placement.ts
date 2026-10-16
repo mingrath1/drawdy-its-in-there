@@ -158,7 +158,7 @@ function clutterGrid(frame: Rect, items: readonly BoardItem[]): Grid {
     for (const item of items) {
         const paths = inkPaths(item);
         if (paths) {
-            for (const path of paths) tracePath(path, cell, addInk);
+            for (const path of paths) tracePath(path, frame, cell, addInk);
         } else {
             fillRect(item.rect, frame, cell, cols, rows, (i, area) => {
                 ink[i] += (FILL_INK_PER_CELL * area) / cell;
@@ -201,21 +201,54 @@ function inkPaths(item: BoardItem): Point[][] | null {
     }
 }
 
-function tracePath(path: Point[], cell: number, addInk: (x: number, y: number, amount: number) => void) {
+/**
+ * Inks each segment's part inside the frame, two samples per cell along its longer axis. A clipped
+ * segment spans at most GRID_CELLS cells, so a stroke reaching far off the frame costs no more.
+ */
+function tracePath(path: Point[], frame: Rect, cell: number, addInk: (x: number, y: number, amount: number) => void) {
     if (path.length === 1) {
         addInk(path[0][0], path[0][1], cell / 4);
         return;
     }
     for (let i = 1; i < path.length; i++) {
-        const [ax, ay] = path[i - 1];
-        const [bx, by] = path[i];
+        const inside = clipToRect(path[i - 1], path[i], frame);
+        if (!inside) continue;
+        const [[ax, ay], [bx, by]] = inside;
         const length = Math.hypot(bx - ax, by - ay);
-        const steps = Math.max(1, Math.ceil(length / (cell / 2)));
+        const steps = Math.max(1, Math.ceil((2 * Math.max(Math.abs(bx - ax), Math.abs(by - ay))) / cell));
         for (let s = 0; s < steps; s++) {
             const t = (s + 0.5) / steps;
             addInk(ax + (bx - ax) * t, ay + (by - ay) * t, length / steps);
         }
     }
+}
+
+/** The part of segment a-b inside the rect (Liang-Barsky), or null when it misses. */
+function clipToRect(a: Point, b: Point, rect: Rect): [Point, Point] | null {
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+    let t0 = 0;
+    let t1 = 1;
+    const edges = [
+        [-dx, a[0] - rect.x],
+        [dx, rect.x + rect.width - a[0]],
+        [-dy, a[1] - rect.y],
+        [dy, rect.y + rect.height - a[1]],
+    ];
+    for (const [p, q] of edges) {
+        if (p === 0) {
+            if (q < 0) return null;
+        } else if (p < 0) {
+            t0 = Math.max(t0, q / p);
+        } else {
+            t1 = Math.min(t1, q / p);
+        }
+    }
+    if (t0 > t1) return null;
+    return [
+        [a[0] + t0 * dx, a[1] + t0 * dy],
+        [a[0] + t1 * dx, a[1] + t1 * dy],
+    ];
 }
 
 function fillRect(

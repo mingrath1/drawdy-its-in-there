@@ -150,6 +150,42 @@ describe("plant", () => {
         for (const t of targets) assert.equal(t.strokeColor, DEFAULT_STROKE_COLOR);
     });
 
+    it("plants within 200 ms when strokes, shapes, and lines reach far outside the frame", () => {
+        const frameRect: Rect = { x: 0, y: 0, width: 800, height: 600 };
+        const zigzag = Array.from({ length: 128 }, (_, i): [number, number] => (i % 2 === 0 ? [0, 0] : [1e7, 0]));
+        const huge: Rect = { x: -1e7, y: -1e7, width: 2e7, height: 2e7 };
+        const boards: Record<string, BoardItem[]> = {
+            freedraw: Array.from({ length: 64 }, () => ({ rect: { x: 0, y: 0, width: 1e7, height: 0 }, kind: "freedraw", points: zigzag })),
+            shape: Array.from({ length: 500 }, () => ({ rect: huge, kind: "shape" })),
+            line: Array.from({ length: 500 }, () => ({ rect: huge, kind: "line" })),
+        };
+        for (const [name, items] of Object.entries(boards)) {
+            const started = performance.now();
+            const targets = plant(request(items, { board: { frameRect, items } }));
+            const elapsed = performance.now() - started;
+            assert.ok(elapsed < 200, `${name} took ${elapsed.toFixed(0)} ms`);
+            assert.equal(targets.length, 3, name);
+        }
+    });
+
+    it("inks a stroke that leaves the frame like the part of it inside the frame", () => {
+        const frameRect: Rect = { x: 0, y: 0, width: 800, height: 600 };
+        const stroke = (from: [number, number], to: [number, number]): BoardItem => ({
+            rect: { x: 0, y: 0, width: 800, height: 600 },
+            kind: "freedraw",
+            points: [from, to],
+        });
+        const inside = [stroke([0, 100], [800, 100]), stroke([200, 0], [200, 600])];
+        const reaching = [stroke([-1e6, 100], [1e6, 100]), stroke([200, -5e6], [200, 5e6])];
+        for (let seed = 0; seed < 10; seed++) {
+            assert.deepEqual(
+                plant(request(reaching, { seed, board: { frameRect, items: reaching } })),
+                plant(request(inside, { seed, board: { frameRect, items: inside } })),
+                `seed ${seed}`,
+            );
+        }
+    });
+
     it("hides nothing without stamps or with a zero count", () => {
         assert.deepEqual(plant(request(boards.dense, { stampIds: [] })), []);
         assert.deepEqual(plant(request(boards.dense, { count: 0 })), []);
