@@ -6,7 +6,7 @@ import { openDurableObjectSqliteStorage } from "@earendil-works/pi-durable/stora
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BoardSnapshot } from "../../src/shared/hunt.ts";
 import { HuntDoc, huntHarnessOptions, plain } from "../src/durable.ts";
-import { MAX_PLAYERS_ONLINE } from "../src/room.ts";
+import { HELLO_TIMEOUT_MS, MAX_PENDING_HELLOS, MAX_PLAYERS_ONLINE } from "../src/room.ts";
 import {
   MAX_FRAME_CHARS,
   MAX_LEAGUE,
@@ -528,6 +528,45 @@ describe("wire safety", () => {
     expect(b.received.filter(snapshotWhere(() => true))).toEqual([]);
     expect(errors).toHaveBeenCalledWith(expect.stringContaining("snapshot"));
     b.close();
+  });
+});
+
+describe("connections waiting for hello", () => {
+  it("closes a connection that sends no hello within HELLO_TIMEOUT_MS, by alarm", async () => {
+    const keys = roomKeys();
+    const stub = env.ROOMS.getByName(keys.roomId);
+    const openedAt = Date.now();
+    const idle = await connect(keys.roomId);
+    const alarm = await runInDurableObject(stub, (_instance, state) => state.storage.getAlarm());
+    expect(alarm).not.toBeNull();
+    expect(alarm!).toBeLessThanOrEqual(Date.now() + HELLO_TIMEOUT_MS);
+
+    vi.spyOn(Date, "now").mockReturnValue(openedAt + HELLO_TIMEOUT_MS + 1_000);
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    expect((await idle.closed).code).toBe(1008);
+  });
+
+  it("refuses a hello that comes after HELLO_TIMEOUT_MS", async () => {
+    const keys = roomKeys();
+    const openedAt = Date.now();
+    const late = await connect(keys.roomId);
+    vi.spyOn(Date, "now").mockReturnValue(openedAt + HELLO_TIMEOUT_MS + 1_000);
+    late.send({ v: 1, type: "hello", roomId: keys.roomId, joinToken: keys.joinToken, player: alice });
+    expect((await late.closed).code).toBe(1008);
+    expect(late.received.some(snapshotWhere(() => true))).toBe(false);
+  });
+
+  it("refuses a connection while MAX_PENDING_HELLOS others wait for hello", async () => {
+    const keys = roomKeys();
+    const waiting = await Promise.all(Array.from({ length: MAX_PENDING_HELLOS }, () => connect(keys.roomId)));
+    const extra = await connect(keys.roomId);
+    await extra.waitFor(faultCoded("full"));
+    expect((await extra.closed).code).toBe(1008);
+
+    waiting[0]!.send({ v: 1, type: "hello", roomId: keys.roomId, joinToken: keys.joinToken, player: alice });
+    await waiting[0]!.waitFor(snapshotWhere(() => true));
+    const { client } = await joined(keys, bob);
+    for (const socket of [...waiting, client]) socket.close();
   });
 });
 

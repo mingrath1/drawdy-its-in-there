@@ -45,6 +45,10 @@ const RECOVERY_ALARM_DELAY_MS = 60_000;
 const EARLIEST_DEADLINE_MS = roundDurationMs(MAX_DIFFICULTY);
 const RATE_LIMIT = { perSecond: 10, burst: 20, retryAfterMs: 1_000 };
 export const MAX_PLAYERS_ONLINE = 32;
+/** A connection must say hello within this long. */
+export const HELLO_TIMEOUT_MS = 5_000;
+/** Connections that may wait for their hello at once. */
+export const MAX_PENDING_HELLOS = 16;
 const STAMP_IDS = STAMP_PACK.map((stamp) => stamp.id);
 const ROOM_PATH = /^\/rooms\/([A-Za-z0-9:_-]{1,128})\/?$/;
 
@@ -52,7 +56,11 @@ const ROOM_PATH = /^\/rooms\/([A-Za-z0-9:_-]{1,128})\/?$/;
 export const roomIdFromPath = (pathname: string): string | null =>
   ROOM_PATH.exec(pathname)?.[1] ?? null;
 
-type ConnectionState = { roomId: string; player?: Player };
+/** `openedAt` lives in the attachment so the hello deadline survives hibernation. */
+type ConnectionState = { roomId: string; openedAt: number; player?: Player };
+
+const helloOverdue = (state: ConnectionState, now: number): boolean =>
+  state.player === undefined && now >= state.openedAt + HELLO_TIMEOUT_MS;
 
 type CommandOutcome =
   | { kind: "applied"; code: ResultCode; revision: number }
@@ -150,18 +158,25 @@ export class Room extends DurableObject<Env> {
     if (roomId === null || request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
       return Response.json({ error: "WebSocket upgrade to /rooms/<roomId> required" }, { status: 426 });
     }
+    const now = Date.now();
+    this.#closeOverdueHellos(now);
+    const waiting = this.#waitingForHello().length;
     const pair = new WebSocketPair();
     this.ctx.acceptWebSocket(pair[1]);
-    pair[1].serializeAttachment({ roomId } satisfies ConnectionState);
+    pair[1].serializeAttachment({ roomId, openedAt: now } satisfies ConnectionState);
+    if (waiting >= MAX_PENDING_HELLOS) this.#fault(pair[1], "full", 1008, HELLO_TIMEOUT_MS);
+    else await this.#setAlarmNoLaterThan(now + HELLO_TIMEOUT_MS);
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
 
   override async alarm(): Promise<void> {
+    this.#closeOverdueHellos(Date.now());
     await this.#expireOverdueRound();
     await this.#refreshAlarm();
   }
 
   override async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    if (helloOverdue(connectionState(socket), Date.now())) return this.#fault(socket, "unavailable", 1008);
     if (!this.#withinRate(socket)) {
       return this.#fault(socket, "rate-limit", 1008, RATE_LIMIT.retryAfterMs);
     }
@@ -324,6 +339,18 @@ export class Room extends DurableObject<Env> {
     }
   }
 
+  #waitingForHello(): WebSocket[] {
+    return this.ctx
+      .getWebSockets()
+      .filter((socket) => socket.readyState === WebSocket.READY_STATE_OPEN && connectionState(socket).player === undefined);
+  }
+
+  #closeOverdueHellos(now: number): void {
+    for (const socket of this.#waitingForHello()) {
+      if (helloOverdue(connectionState(socket), now)) this.#fault(socket, "unavailable", 1008);
+    }
+  }
+
   /** A player already online may open another connection. A new one needs a free place. */
   #hasPlaceOnline(playerId: string): boolean {
     const online = new Set(this.#players().map(({ player }) => player.playerId));
@@ -373,6 +400,9 @@ export class Room extends DurableObject<Env> {
       const deadlines: number[] = [];
       const deadline = open === null ? undefined : roundDeadline(open.room);
       if (deadline !== undefined) deadlines.push(deadline);
+      for (const socket of this.#waitingForHello()) {
+        deadlines.push(connectionState(socket).openedAt + HELLO_TIMEOUT_MS);
+      }
       const tasksToResume: TaskId[] = [];
       for (const task of tasks) {
         if (task.state.kind === "blocked") continue;
