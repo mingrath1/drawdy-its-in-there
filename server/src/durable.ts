@@ -16,7 +16,7 @@ import { plantFinished } from "../../src/shared/rules.ts";
 /** `revision` orders snapshots; `taunt` is the line for the change that produced this revision. */
 export type OpenRoom = { tokenHash: string; revision: number; taunt: string | null; room: Room };
 
-/** The room's whole durable state. `open` is null until the first hello creates the room. */
+/** `open` is null until the first hello creates the room. */
 export const HuntDoc = defineDoc<{ open: OpenRoom | null }>({
   kind: "app.hunt",
   version: 1,

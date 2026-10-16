@@ -76,7 +76,6 @@ const fnv1a = (text: string): number => {
   return hash >>> 0;
 };
 
-/** Bundled Thai and English lines, picked deterministically from the moment. */
 export const bundledTaunts: TauntHost = (moment) => {
   const lines = linesFor(moment);
   const salt = moment.kind === "find" ? moment.find.targetId : "";

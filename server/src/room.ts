@@ -46,7 +46,7 @@ const MAX_PLAYERS_ONLINE = 32;
 const STAMP_IDS = STAMP_PACK.map((stamp) => stamp.id);
 const ROOM_PATH = /^\/rooms\/([A-Za-z0-9:_-]{1,128})\/?$/;
 
-/** The room id in a socket path, in the same shape protocol ids take. */
+/** Room ids take the same shape as protocol ids. */
 export const roomIdFromPath = (pathname: string): string | null =>
   ROOM_PATH.exec(pathname)?.[1] ?? null;
 
@@ -102,7 +102,6 @@ const snapshot = (open: OpenRoom, self: string, taunt: string | null): Snapshot 
   taunt,
 });
 
-/** One hunt room: its rounds, league and difficulty, and the players connected to it. */
 export class Room extends DurableObject<Env> {
   #harness!: Harness;
   readonly #taunts: TauntHost;

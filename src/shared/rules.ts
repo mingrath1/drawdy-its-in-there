@@ -95,7 +95,6 @@ const step = (room: Room, code: ResultCode, plantNext: PlantRequest | null = nul
     plant: plantNext,
 });
 
-/** Promotes a ready next round, else plants one from this board, and goes live. */
 function start(room: Room, board: BoardSnapshot, context: RuleContext): Step {
     if (room.current?.status === "live") return step(room, "busy");
     const difficulty = room.difficulty;
