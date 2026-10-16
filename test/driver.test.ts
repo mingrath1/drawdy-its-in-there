@@ -650,6 +650,30 @@ describe("driver", () => {
         assert.deepEqual(markers(t.drawdy).map((m) => m.meta.iitFound), ["round-9:t0"]);
     });
 
+    it("heals a failed marker and a missing preview when a reconnect repeats the same revision", async () => {
+        const t = setup();
+        t.failOnce((r) => r.type === "command:scene:create-drawdy-preview-elements");
+        const room = await joinRemote(t, live());
+        laser(t, [circleTarget(1)]);
+        await t.flush();
+        room.answer("ok");
+        t.failOnce((r) => r.type === "command:scene:create-drawdy-preview-elements");
+        t.failOnce((r) => r.type === "command:scene:add-drawdy-elements");
+        const final = live("round-9", undefined, [findBy(1)]);
+        room.snapshot(final, { revision: 2 });
+        await t.flush();
+        assert.equal(markers(t.drawdy).length, 0);
+        assert.equal(drawnTargets(t.drawdy).length, 2);
+
+        const upserts = () => t.drawdy.commands.filter((c) => c.type === "command:dom:upsert-floating-element").length;
+        const before = upserts();
+        room.snapshot(final, { revision: 2 });
+        await t.flush();
+        assert.deepEqual(markers(t.drawdy).map((m) => m.meta.iitFound), ["round-9:t1"], "the marker is written");
+        assert.equal(drawnTargets(t.drawdy).length, 3, "the missing target is drawn");
+        assert.equal(upserts(), before, "the banner is not redrawn for a revision it has shown");
+    });
+
     it("writes our missing markers when it joins a round, as after a reload", async () => {
         const t = setup();
         const finds = [findBy(1), findBy(2, "u-ben", "Ben", "#22c55e")];

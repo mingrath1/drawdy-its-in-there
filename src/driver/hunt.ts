@@ -320,7 +320,8 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             else if (message.code === "auth" || message.code === "version") await leave(h);
             return;
         }
-        if (h.snapshot && message.revision <= h.snapshot.revision) return;
+        if (h.snapshot && message.revision < h.snapshot.revision) return;
+        if (h.snapshot?.revision === message.revision) return repair(h, message);
         h.snapshot = message;
         if (isRunning(message.room.current)) {
             h.starting = null;
@@ -340,6 +341,16 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             if (!isRunning(current)) await requestRound(h);
         }
         await renderBanner(h);
+    }
+
+    /**
+     * A revision seen before brings no new state, but a reconnect replays it, and after a room's last
+     * change nothing newer may come. So it still heals what failed to draw or write, and nothing else.
+     */
+    async function repair(h: Hunt, snapshot: Snapshot) {
+        const current = snapshot.room.current;
+        if (h.round && current?.status === "live" && current.id === h.round.id) await drawMissing(h.round);
+        await quietly("writing found markers", markFinds(h, snapshot));
     }
 
     async function requestRound(h: Hunt) {

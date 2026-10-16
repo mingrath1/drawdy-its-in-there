@@ -5,6 +5,8 @@
 //
 // Rules both sides rely on:
 // - The room sends full snapshots, ordered by `revision`. Clients ignore lower revisions.
+//   A reconnect repeats the current revision, so on an equal one a client changes no state
+//   but still writes missing found markers and draws missing targets.
 // - Every mutating command carries a requestId. The room stores one receipt per
 //   (playerId, requestId) for each player's newest 512 requests. A retry returns the stored
 //   result. A retry with a different payload returns "request-conflict" and changes nothing.
