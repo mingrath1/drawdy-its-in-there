@@ -440,6 +440,40 @@ describe("rounds", () => {
   });
 });
 
+describe("snapshots", () => {
+  const snapshotsIn = (messages: ServerMessage[]) => messages.filter(snapshotWhere(() => true));
+
+  it("gives a joining player one snapshot, carrying the taunt of the change its hello published", async () => {
+    const keys = roomKeys();
+    const { client: a } = await joined(keys, alice);
+    const round = await startLive(a);
+    vi.spyOn(Date, "now").mockReturnValue(round.endsAt + 1);
+
+    const { client: b, first } = await joined(keys, bob);
+    expect((await command(b, { type: "round.cancel", roundId: "none" })).code).toBe("stale");
+    expect(first.room.current).toMatchObject({ id: round.id, reason: "time-up" });
+    expect(first.taunt).toEqual(expect.any(String));
+    expect(snapshotsIn(b.received)).toHaveLength(1);
+    a.close();
+    b.close();
+  });
+
+  it("answers a replayed command with one snapshot when its commit published one", async () => {
+    const { client } = await joined(roomKeys(), alice);
+    const round = await startLive(client);
+    expect((await claim(client, round, round.targets[0]!.id, "first-claim")).code).toBe("ok");
+    vi.spyOn(Date, "now").mockReturnValue(round.endsAt + 1);
+
+    const from = client.received.length;
+    expect((await claim(client, round, round.targets[0]!.id, "first-claim")).code).toBe("ok");
+    const sent = snapshotsIn(client.received.slice(from));
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.room.current).toMatchObject({ id: round.id, reason: "time-up" });
+    expect(sent[0]!.taunt).toEqual(expect.any(String));
+    client.close();
+  });
+});
+
 describe("wire safety", () => {
   it("logs an alarm refresh that fails after the reply instead of faulting the connection", async () => {
     const keys = roomKeys();

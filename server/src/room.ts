@@ -56,7 +56,7 @@ type ConnectionState = { roomId: string; player?: Player };
 
 type CommandOutcome =
   | { kind: "applied"; code: ResultCode; revision: number }
-  | { kind: "replayed"; code: ResultCode; revision: number; open: OpenRoom }
+  | { kind: "replayed"; code: ResultCode; revision: number; open: OpenRoom; published: boolean }
   | { kind: "conflict"; revision: number };
 
 const reportError = (
@@ -207,18 +207,19 @@ export class Room extends DurableObject<Env> {
     const now = Date.now();
     // Plant tasks belong to a conversation, so the root one must exist.
     await this.#harness.root(context);
-    const open = await this.#harness.commit(async (tx) => {
+    const admitted = await this.#harness.commit(async (tx) => {
       const doc = await tx.doc(HuntDoc);
       const before = doc.open === null ? openRoom(hello.roomId) : plain<RoomState>(doc.open.room);
       if (!canJoin(before, player.playerId) || !this.#hasPlaceOnline(player.playerId)) return null;
       socket.serializeAttachment({ ...state, player } satisfies ConnectionState);
       doc.open ??= { revision: 0, taunt: null, room: before };
       const after = joinRoom(expireRound(before, now), player);
-      publish(doc.open, before, after, this.#tauntFor(before, after));
-      return plain<OpenRoom>(doc.open);
+      // The player is attached already, so a published change reaches this socket by broadcast, taunt included.
+      const published = publish(doc.open, before, after, this.#tauntFor(before, after));
+      return { open: plain<OpenRoom>(doc.open), published };
     }, context);
-    if (open === null) return this.#fault(socket, "full", 1008, RECOVERY_ALARM_DELAY_MS);
-    this.#send(socket, snapshot(open, player.playerId, null));
+    if (admitted === null) return this.#fault(socket, "full", 1008, RECOVERY_ALARM_DELAY_MS);
+    if (!admitted.published) this.#send(socket, snapshot(admitted.open, player.playerId, null));
     await this.#refreshAlarmAfterReply();
   }
 
@@ -248,9 +249,9 @@ export class Room extends DurableObject<Env> {
       const { receipts } = await tx.doc(HuntReceipts, player.playerId, null);
       const stored = receipts.find((receipt) => receipt.requestId === command.requestId);
       if (stored !== undefined) {
-        publish(doc.open, before, reconciled, this.#tauntFor(before, reconciled));
+        const published = publish(doc.open, before, reconciled, this.#tauntFor(before, reconciled));
         return stored.fingerprint === fingerprint
-          ? { kind: "replayed", code: stored.code, revision: stored.revision, open: plain<OpenRoom>(doc.open) }
+          ? { kind: "replayed", code: stored.code, revision: stored.revision, open: plain<OpenRoom>(doc.open), published }
           : { kind: "conflict", revision: doc.open.revision };
       }
       const step = reduce(reconciled, command, player, rules);
@@ -267,8 +268,10 @@ export class Room extends DurableObject<Env> {
       return { kind: "applied", code: step.code, revision: doc.open.revision };
     }, context);
 
-    // A replayed result carries its original revision, so send the current state beside it.
-    if (outcome.kind === "replayed") this.#send(socket, snapshot(outcome.open, player.playerId, null));
+    // A replayed result carries its original revision, so the current state goes beside it, by broadcast or here.
+    if (outcome.kind === "replayed" && !outcome.published) {
+      this.#send(socket, snapshot(outcome.open, player.playerId, null));
+    }
     this.#send(socket, {
       v: PROTOCOL_VERSION,
       type: "result",

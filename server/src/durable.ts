@@ -59,12 +59,16 @@ export const HuntReceipts = defineDocFamily<{ receipts: Receipt[] }, null>({
 /** A plain copy of a draft or snapshot, safe to keep after its commit settles. */
 export const plain = <T>(value: Draft<T> | Readonly<T>): T => JSON.parse(JSON.stringify(value));
 
-/** Commits a new room state: one revision per public change, carrying that change's taunt. */
-export function publish(open: Draft<OpenRoom>, before: Room, after: Room, taunt: string | null): void {
-  if (after === before) return;
+/**
+ * Commits a new room state: one revision per public change, carrying that change's taunt. Returns whether it
+ * changed anything, since only then does the commit broadcast a snapshot.
+ */
+export function publish(open: Draft<OpenRoom>, before: Room, after: Room, taunt: string | null): boolean {
+  if (after === before) return false;
   open.room = after;
   open.revision += 1;
   open.taunt = taunt;
+  return true;
 }
 
 /** `plant` is pure, so a rerun after eviction lands the same targets. */
