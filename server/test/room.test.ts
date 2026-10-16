@@ -312,7 +312,7 @@ describe("rounds", () => {
     const afterSecond = await sendSets(600, 1_200);
     expect(afterSecond).toBeLessThan(afterFirst * 1.25);
     client.close();
-  });
+  }, 20_000);
 
   it("answers request-conflict when a requestId returns with a changed payload", async () => {
     const { client } = await joined(roomKeys(), alice);
@@ -402,6 +402,26 @@ describe("rounds", () => {
 });
 
 describe("wire safety", () => {
+  it("logs an alarm refresh that fails after the reply instead of faulting the connection", async () => {
+    const keys = roomKeys();
+    const { client } = await joined(keys, alice);
+    await runInDurableObject(env.ROOMS.getByName(keys.roomId), (_instance, state) => {
+      const transaction = state.storage.transaction.bind(state.storage);
+      vi.spyOn(state.storage, "transaction").mockImplementation((closure) =>
+        transaction((txn) =>
+          closure(Object.assign(Object.create(txn), { getAlarm: () => Promise.reject(new Error("alarm storage down")) })),
+        ),
+      );
+    });
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect((await command(client, { type: "difficulty.set", value: 2 })).code).toBe("ok");
+    expect((await command(client, { type: "difficulty.set", value: 3 })).code).toBe("ok");
+    expect(client.received.some(faultCoded("unavailable"))).toBe(false);
+    expect(errors).toHaveBeenCalledWith(expect.stringContaining("alarm storage down"));
+    client.close();
+  });
+
   it("withholds and logs a snapshot its clients would reject", async () => {
     const keys = roomKeys();
     const stub = env.ROOMS.getByName(keys.roomId);

@@ -219,7 +219,7 @@ export class Room extends DurableObject<Env> {
 
     socket.serializeAttachment({ ...state, player: hello.player } satisfies ConnectionState);
     this.#send(socket, snapshot(open, hello.player.playerId, null));
-    await this.#refreshAlarm();
+    await this.#refreshAlarmAfterReply();
   }
 
   /**
@@ -277,7 +277,7 @@ export class Room extends DurableObject<Env> {
       code: outcome.kind === "conflict" ? "request-conflict" : outcome.code,
       revision: outcome.revision,
     });
-    await this.#refreshAlarm();
+    await this.#refreshAlarmAfterReply();
   }
 
   async #expireOverdueRound(): Promise<void> {
@@ -375,6 +375,11 @@ export class Room extends DurableObject<Env> {
       // waitForTask starts the scheduler, so persist its recovery alarm first.
       for (const taskId of tasksToResume) this.#refreshAlarmWhenTaskSettles(taskId);
     });
+  }
+
+  /** The reply is out, so a failed refresh is only logged. The pre-armed alarm or the next wake reconciles it. */
+  #refreshAlarmAfterReply(): Promise<void> {
+    return this.#refreshAlarm().catch((error: unknown) => reportError("Room alarm refresh failed", error));
   }
 
   #setAlarmNoLaterThan(timestamp: number): Promise<void> {
