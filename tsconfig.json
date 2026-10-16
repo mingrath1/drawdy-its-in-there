@@ -10,7 +10,8 @@
         "esModuleInterop": true,
         "isolatedModules": true,
         "allowImportingTsExtensions": true,
-        "noEmit": true
+        "noEmit": true,
+        "verbatimModuleSyntax": true
     },
     "include": ["src", "test", "bundle.ts", "vite.config.ts", "vite-plugin-drawdy.ts"]
 }
