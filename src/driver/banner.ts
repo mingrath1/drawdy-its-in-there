@@ -13,7 +13,8 @@ export const BANNER_TOP = 72;
 
 export type BannerTarget = { label: string; labelTh?: string; foundColor: string | null };
 
-export type BannerModel = { level: number; league: { name: string; finds: number }[] } & (
+/** `nextLevel` is the room's difficulty: the level the next round is planted at. */
+export type BannerModel = { nextLevel: number; league: { name: string; finds: number }[] } & (
     | { phase: "connecting" }
     | { phase: "idle" }
     | { phase: "hiding" }
@@ -49,7 +50,7 @@ export function bannerSchema(model: BannerModel, styling: ModuleStyling): DomEle
         children: [text("ออก · Leave", 11, styling.mutedForeground, "medium")],
     };
 
-    const header: DomElementSchema[] = [text(`It's In There! · Lv ${model.level}`, 12, styling.mutedForeground, "semibold")];
+    const header: DomElementSchema[] = [text("It's In There!", 12, styling.mutedForeground, "semibold")];
     const body: DomElementSchema[] = [];
     let interactive = false;
 
@@ -65,7 +66,7 @@ export function bannerSchema(model: BannerModel, styling: ModuleStyling): DomEle
         case "idle":
             interactive = true;
             body.push(text("ยังไม่มีรอบที่เล่นอยู่ · No round running", 13, styling.foreground, "semibold"));
-            body.push(row([button(NEXT_BUTTON_ID, "เริ่ม · Start", true), button(STOP_BUTTON_ID, "พอแล้ว · Stop", false)], 8));
+            body.push(row([button(NEXT_BUTTON_ID, `เริ่ม · Start (Lv ${model.nextLevel})`, true), button(STOP_BUTTON_ID, "พอแล้ว · Stop", false)], 8));
             break;
         case "live": {
             const total = model.targets.length;
@@ -90,7 +91,7 @@ export function bannerSchema(model: BannerModel, styling: ModuleStyling): DomEle
             body.push(targetGrid(model.targets, styling, text));
             body.push(text(`เจอ ${found}/${total} · Found ${found}/${total}`, 12, styling.foreground, "medium"));
             if (model.taunt) body.push(text(model.taunt, 12, styling.mutedForeground));
-            const next = model.reason === "all-found" ? "รอบต่อไป (ยากขึ้น) · Next round (harder)" : "รอบต่อไป · Next round";
+            const next = `รอบต่อไป · Next round (Lv ${model.nextLevel})`;
             body.push(row([button(NEXT_BUTTON_ID, next, true), button(STOP_BUTTON_ID, "พอแล้ว · Stop", false)], 8));
             break;
         }

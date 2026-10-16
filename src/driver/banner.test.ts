@@ -31,7 +31,7 @@ const targets = [
     { label: "cat face", labelTh: "หน้าแมว", foundColor: "#ff4d4d" },
     { label: "229", foundColor: null },
 ];
-const base = { level: 2, league: [{ name: "Ana", finds: 3 }, { name: "Ben", finds: 1 }] };
+const base = { nextLevel: 3, league: [{ name: "Ana", finds: 3 }, { name: "Ben", finds: 1 }] };
 const models: BannerModel[] = [
     { ...base, phase: "connecting" },
     { ...base, phase: "idle" },
@@ -76,11 +76,12 @@ describe("bannerSchema", () => {
         assert.ok(all.includes("Ana 3 · Ben 1"));
     });
 
-    it("offers a harder next round only after everything was found", () => {
+    it("ends with the outcome and offers the next round at the room's next level", () => {
         const allFound = texts(bannerSchema(models[4], STYLING));
         const timeUp = texts(bannerSchema(models[5], STYLING));
-        assert.ok(allFound.includes("รอบต่อไป (ยากขึ้น) · Next round (harder)"));
-        assert.ok(timeUp.includes("รอบต่อไป · Next round"));
+        assert.ok(allFound.includes("เจอครบ! · All found!"));
+        assert.ok(timeUp.includes("หมดเวลา! · Time's up!"));
+        assert.ok(timeUp.includes("รอบต่อไป · Next round (Lv 3)"));
         assert.deepEqual(buttons(bannerSchema(models[5], STYLING)).map((b) => b.domId), [NEXT_BUTTON_ID, STOP_BUTTON_ID]);
     });
 });

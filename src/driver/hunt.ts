@@ -3,7 +3,7 @@
 // Every event runs through one queue, so handlers never interleave.
 
 import type { DriverSubscriptionEvent, ModuleStyling, SubscribedDrawdyElement } from "@drawdy/driver-protocol";
-import type { Find, Rect, Round, Target } from "../shared/hunt.ts";
+import type { BoardSnapshot, Find, Rect, Round, Target } from "../shared/hunt.ts";
 import { judge } from "../shared/judge.ts";
 import { PROTOCOL_VERSION, foundTag, parseFrameMeta } from "../shared/protocol.ts";
 import type { FrameMeta, HuntHost, Player, Result, ServerMessage, Snapshot, WireRound } from "../shared/protocol.ts";
@@ -67,6 +67,10 @@ type Hunt = {
     host: HuntHost;
     snapshot: Snapshot | null;
     clockSkew: number;
+    /** The host's latest line. Snapshots without a new moment carry none, so the last one stays up. */
+    taunt: string | null;
+    /** The board our last round.start sent, offered once more to plant the next round while this one plays. */
+    offerBoard: BoardSnapshot | null;
     startOnOpen: boolean;
     round: RoundView | null;
     claims: Map<string, { roundId: string; target: Target }>;
@@ -140,6 +144,8 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             host: hostFor(frame.meta, difficulty),
             snapshot: null,
             clockSkew: 0,
+            taunt: null,
+            offerBoard: null,
             startOnOpen: true,
             round: null,
             claims: new Map(),
@@ -303,6 +309,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         if (h.snapshot && message.revision <= h.snapshot.revision) return;
         h.snapshot = message;
         h.clockSkew = message.serverNow - Date.now();
+        if (message.taunt) h.taunt = message.taunt;
         const current = message.room.current;
         log(
             `snapshot r${message.revision}: ${current ? `${current.status} ${current.id}` : "no round"}, difficulty ${message.room.difficulty}`
@@ -338,6 +345,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         const board = boardSnapshot(rect, drawdyElements);
         const points = board.items.reduce((n, i) => n + (i.points?.length ?? 0), 0);
         log(`asking for a round: board has ${board.items.length} items and ${points} points`);
+        h.offerBoard = board;
         h.host.send({ v: PROTOCOL_VERSION, type: "round.start", requestId: nextRequestId(), board });
     }
 
@@ -350,6 +358,10 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             h.round = await drawRound(h, current);
             await toLaser(h);
             startTicker(h);
+            if (h.offerBoard) {
+                h.host.send({ v: PROTOCOL_VERSION, type: "board.offer", requestId: nextRequestId(), afterRoundId: current.id, board: h.offerBoard });
+                h.offerBoard = null;
+            }
         }
         await paintFinds(h.round, current.finds);
         if (current.status === "ended" && !h.round.ended) await finishRound(h, h.round, current);
@@ -527,12 +539,12 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
 
     function bannerModel(h: Hunt): BannerModel {
         const s = h.snapshot;
-        const level = s?.room.difficulty ?? 1;
+        const nextLevel = s?.room.difficulty ?? 1;
         const league = (s?.room.league ?? []).map((e) => ({ name: e.playerName, finds: e.finds }));
         const round = s?.room.current ?? null;
-        if (!s) return { level, league, phase: "connecting" };
-        if (!round) return { level, league, phase: "idle" };
-        if (round.status === "planting" || round.status === "ready") return { level, league, phase: "hiding" };
+        if (!s) return { nextLevel, league, phase: "connecting" };
+        if (!round) return { nextLevel, league, phase: "idle" };
+        if (round.status === "planting" || round.status === "ready") return { nextLevel, league, phase: "hiding" };
         const targets = round.targets.map((t) => {
             const stamp = stamps.get(t.stampId);
             const find = round.finds.find((f) => f.targetId === t.id);
@@ -540,9 +552,9 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         });
         if (round.status === "live") {
             const secondsLeft = (round.endsAt - (Date.now() + h.clockSkew)) / 1000;
-            return { level, league, phase: "live", secondsLeft, targets, taunt: s.taunt };
+            return { nextLevel, league, phase: "live", secondsLeft, targets, taunt: h.taunt };
         }
-        return { level, league, phase: "ended", reason: round.reason, targets, taunt: s.taunt };
+        return { nextLevel, league, phase: "ended", reason: round.reason, targets, taunt: h.taunt };
     }
 
     async function renderBanner(h: Hunt) {
