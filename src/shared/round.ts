@@ -35,7 +35,7 @@ export function startRound(round: Round, now: number, durationMs: number): Round
     });
 }
 
-/** Records a find. Only a live round accepts one, and the first find of a target wins. */
+/** Records a find. Only a live round accepts one, before its deadline, and the first find of a target wins. */
 export function claimFind(round: Round, find: Find): RoundResult {
     if (round.status !== "live") return illegal(round.status, "live");
     if (!round.targets.some((t) => t.id === find.targetId)) {
@@ -45,7 +45,7 @@ export function claimFind(round: Round, find: Find): RoundResult {
     if (earlier) {
         return { ok: false, rejection: { kind: "already-found", targetId: find.targetId, by: earlier.playerId } };
     }
-    if (find.at > round.endsAt) {
+    if (find.at >= round.endsAt) {
         return { ok: false, rejection: { kind: "too-late", endsAt: round.endsAt, at: find.at } };
     }
     return ok({ ...round, finds: [...round.finds, find] });

@@ -255,7 +255,7 @@ describe("rounds", () => {
 
     const afterEnd = await claim(a, round, first!.id, "claim-first");
     expect(afterEnd).toEqual(original);
-    expect((await claim(a, round, first!.id)).code).toBe("expired");
+    expect((await claim(a, round, first!.id)).code).toBe("not-live");
     a.close();
     b.close();
   });

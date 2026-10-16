@@ -143,7 +143,7 @@ function claim(room: Room, roundId: string, targetId: string, player: Player, no
         at: now,
     };
     const result = claimFind(current, find);
-    if (!result.ok) return step(room, rejectionCode(result.rejection));
+    if (!result.ok) return step(room, rejectionCode(result.rejection, current));
     const credited: Room = { ...room, current: result.round, league: credit(room.league, find) };
     return step(allFound(result.round) ? finish(credited, result.round, now, "all-found") : credited, "ok");
 }
@@ -172,10 +172,11 @@ function plantRequest(context: RuleContext, board: BoardSnapshot, difficulty: nu
     };
 }
 
-function rejectionCode(rejection: RoundRejection): ResultCode {
+/** "expired" means time ran out. A round that ended any other way is just not live. */
+function rejectionCode(rejection: RoundRejection, round: Round): ResultCode {
     switch (rejection.kind) {
         case "illegal-transition":
-            return rejection.from === "ended" ? "expired" : "not-live";
+            return round.status === "ended" && round.reason === "time-up" ? "expired" : "not-live";
         case "unknown-target":
             return "unknown-target";
         case "already-found":

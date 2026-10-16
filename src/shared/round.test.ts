@@ -95,10 +95,11 @@ describe("round", () => {
             ok: false,
             rejection: { kind: "unknown-target", targetId: "nope" },
         });
-        assert.deepEqual(claimFind(sample.live, find("r1:0", "ana", 61_001)), {
+        assert.deepEqual(claimFind(sample.live, find("r1:0", "ana", 61_000)), {
             ok: false,
-            rejection: { kind: "too-late", endsAt: 61_000, at: 61_001 },
+            rejection: { kind: "too-late", endsAt: 61_000, at: 61_000 },
         });
+        assert.equal(claimFind(sample.live, find("r1:0", "ana", 60_999)).ok, true);
     });
 
     it("leaves the round it was given untouched", () => {

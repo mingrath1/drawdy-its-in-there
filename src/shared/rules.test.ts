@@ -90,6 +90,18 @@ describe("rules", () => {
         assert.equal(expireRound(room, round.endsAt - 1), room);
     });
 
+    it("answers a claim on an ended round with expired only when its time ran out", () => {
+        const { room } = start(lobby());
+        const round = live(room);
+        const target = round.targets[0]!.id;
+        const timedOut = expireRound(room, round.endsAt);
+        const cleared = clearAll(room, [ana]);
+        const cancelled = reduce(room, command({ type: "round.cancel", roundId: round.id }), ana, context(3_000)).room;
+        assert.equal(claim(timedOut, round.id, target, ben, round.endsAt + 1).code, "expired");
+        assert.equal(claim(cleared, round.id, target, ben).code, "not-live");
+        assert.equal(claim(cancelled, round.id, target, ben).code, "not-live");
+    });
+
     it("plants the next round from the first offer during a live round and ignores later offers", () => {
         const { room } = start(lobby());
         const round = live(room);
