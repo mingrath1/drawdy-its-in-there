@@ -11,6 +11,7 @@ import {
   encode,
   type FaultCode,
   type Hello,
+  isServerMessage,
   MAX_DIFFICULTY,
   MAX_FRAME_CHARS,
   parseClient,
@@ -334,6 +335,12 @@ export class Room extends DurableObject<Env> {
 
   #send(socket: WebSocket, message: ServerMessage): void {
     if (socket.readyState !== WebSocket.READY_STATE_OPEN) return;
+    if (!isServerMessage(message as unknown)) {
+      reportError("Room withheld a message its clients would reject", new Error(`invalid ${message.type}`), {
+        revision: message.type === "fault" ? undefined : message.revision,
+      });
+      return;
+    }
     try {
       socket.send(encode(message));
     } catch {

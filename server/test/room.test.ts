@@ -1,7 +1,11 @@
-import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { Harness } from "@earendil-works/pi-durable";
+import { openDurableObjectSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/cloudflare";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BoardSnapshot } from "../../src/shared/hunt.ts";
+import { HuntDoc, huntHarnessOptions, plain } from "../src/durable.ts";
 import { MAX_FRAME_CHARS, roundDurationMs, targetCount } from "../../src/shared/protocol.ts";
 import {
   alice,
@@ -363,6 +367,43 @@ describe("rounds", () => {
     expect(harder.targets).toHaveLength(targetCount(5));
     expect(harder.endsAt - harder.startedAt).toBe(roundDurationMs(5));
     client.close();
+  });
+});
+
+describe("wire safety", () => {
+  it("withholds and logs a snapshot its clients would reject", async () => {
+    const keys = roomKeys();
+    const stub = env.ROOMS.getByName(keys.roomId);
+    const { client: a } = await joined(keys, alice);
+    a.close();
+    await runInDurableObject(stub, async (_instance, state) => {
+      const harness = await Harness.open(
+        await openDurableObjectSqliteStorage(state.storage),
+        huntHarnessOptions(() => {}),
+        BACKGROUND_CONTEXT,
+      );
+      try {
+        await harness.commit(async (tx) => {
+          const doc = await tx.doc(HuntDoc);
+          const room = plain(doc.open!.room);
+          doc.open!.room = { ...room, league: [{ ...room.league[0]!, playerName: "bell\u0007" }] };
+          doc.open!.revision += 1;
+        }, BACKGROUND_CONTEXT);
+      } finally {
+        await harness.close(BACKGROUND_CONTEXT);
+      }
+    });
+    await evictDurableObject(stub);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const b = await connect(keys.roomId);
+    b.send({ v: 1, type: "hello", roomId: keys.roomId, joinToken: keys.joinToken, player: bob });
+    expect((await command(b, { type: "difficulty.set", value: 2 })).code).toBe("ok");
+
+    expect(b.invalid).toEqual([]);
+    expect(b.received.filter(snapshotWhere(() => true))).toEqual([]);
+    expect(errors).toHaveBeenCalledWith(expect.stringContaining("snapshot"));
+    b.close();
   });
 });
 

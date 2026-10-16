@@ -147,7 +147,9 @@ const integer = (min: number, max: number): Check => (x) => number(min, max)(x) 
 const uint = integer(0, Number.MAX_SAFE_INTEGER);
 const time = integer(0, 8_640_000_000_000_000);
 const difficulty = integer(MIN_DIFFICULTY, MAX_DIFFICULTY);
-const coordinate = number(-1e7, 1e7);
+const BOUND = 1e7;
+const coordinate = number(-BOUND, BOUND);
+const positive: Check = (x) => number(0, 2 * BOUND)(x) && (x as number) > 0;
 const id: Check = (x) => typeof x === "string" && /^[A-Za-z0-9:_-]{1,128}$/.test(x);
 const token: Check = (x) => typeof x === "string" && /^[0-9a-f]{32,128}$/.test(x);
 const color = text(64);
@@ -160,7 +162,13 @@ const shape = (required: Fields, optional: Fields = {}): Check => (x) =>
     Object.keys(required).every((k) => own(x, k) && required[k]!(x[k])) &&
     Object.keys(x).every((k) => own(required, k) || (own(optional, k) && optional[k]!(x[k])));
 
-const rect = shape({ x: coordinate, y: coordinate, width: number(0.001, 1e7), height: number(0.001, 1e7) });
+/** Every target lies inside its round's frame, so a frame inside the coordinate bound keeps its targets on the wire. */
+const frameRect: Check = (x) =>
+    shape({ x: coordinate, y: coordinate, width: number(1, 2 * BOUND), height: number(1, 2 * BOUND) })(x) &&
+    record(x) &&
+    (x.x as number) + (x.width as number) <= BOUND &&
+    (x.y as number) + (x.height as number) <= BOUND;
+const targetRect = shape({ x: coordinate, y: coordinate, width: positive, height: positive });
 const itemRect = shape({ x: coordinate, y: coordinate, width: number(0, 1e7), height: number(0, 1e7) });
 const point: Check = (x) => Array.isArray(x) && x.length === 2 && x.every(coordinate);
 const item = shape(
@@ -168,18 +176,18 @@ const item = shape(
     { strokeColor: color, strokeWidth: number(0, 1000), points: array(point, MAX_POINTS_PER_ITEM) },
 );
 const board: Check = (x) => {
-    if (!shape({ frameRect: rect, items: array(item, MAX_BOARD_ITEMS) })(x) || !record(x)) return false;
+    if (!shape({ frameRect, items: array(item, MAX_BOARD_ITEMS) })(x) || !record(x)) return false;
     const items = x.items as Record<string, unknown>[];
     return items.reduce((n, i) => n + (Array.isArray(i.points) ? i.points.length : 0), 0) <= MAX_TOTAL_POINTS;
 };
 const player = shape({ playerId: text(128), name: text(64), color });
-const target = shape({ id, stampId: id, rect, rotationDeg: number(-360, 360), strokeColor: color, strokeWidth: number(0, 1000) });
+const target = shape({ id, stampId: id, rect: targetRect, rotationDeg: number(-360, 360), strokeColor: color, strokeWidth: number(0, 1000) });
 const find = shape({ targetId: id, playerId: text(128), playerName: text(64), playerColor: color, at: time });
 const leagueEntry = shape({ playerId: text(128), playerName: text(64), finds: uint, roundsWon: uint });
 
 const wireRound: Check = (x) => {
     if (!record(x)) return false;
-    const base = { id, frameRect: rect };
+    const base = { id, frameRect };
     if (x.status === "planting" || x.status === "ready") return shape({ ...base, status: one(x.status) })(x);
     const played = { ...base, targets: array(target, MAX_TARGETS, 1), startedAt: time, finds: array(find, MAX_TARGETS) };
     if (x.status === "live") return shape({ ...played, status: one("live"), endsAt: time })(x);
