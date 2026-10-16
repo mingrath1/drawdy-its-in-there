@@ -6,8 +6,8 @@
 // Rules both sides rely on:
 // - The room sends full snapshots, ordered by `revision`. Clients ignore lower revisions.
 // - Every mutating command carries a requestId. The room stores one receipt per
-//   (playerId, requestId). A retry returns the stored result. A retry with a different
-//   payload returns "request-conflict" and changes nothing.
+//   (playerId, requestId) for each player's newest 512 requests. A retry returns the stored
+//   result. A retry with a different payload returns "request-conflict" and changes nothing.
 // - The first committed claim per target wins. Commit order decides same-millisecond claims.
 // - Targets of a round stay off the wire until the round is live (toWire).
 // - Target rects are canvas coordinates at plant time. If the hunt frame moved since,
