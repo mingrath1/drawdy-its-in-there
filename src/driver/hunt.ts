@@ -322,7 +322,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         if (message.taunt) h.taunt = message.taunt;
         const current = message.room.current;
         log(
-            `snapshot r${message.revision}: ${current ? `${current.status} ${current.id}` : "no round"}, difficulty ${message.room.difficulty}`
+            `snapshot r${message.revision}: ${current ? `${current.status} ${current.id}` : "no round"}, level ${message.room.difficulty}, next ${message.room.nextDifficulty}`
         );
         await renderRound(h, current);
         if (current?.status === "ended") h.lastEnded = current;

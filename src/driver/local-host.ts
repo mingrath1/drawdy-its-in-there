@@ -6,7 +6,7 @@
 import { bundledTaunts, momentOf } from "../shared/taunts.ts";
 import type { Room } from "../shared/hunt.ts";
 import { plant } from "../shared/placement.ts";
-import { MAX_DIFFICULTY, MIN_DIFFICULTY, PROTOCOL_VERSION, commandFingerprint, isCommand, toWire } from "../shared/protocol.ts";
+import { MAX_DIFFICULTY, MIN_DIFFICULTY, PROTOCOL_VERSION, commandFingerprint, isCommand, nextDifficulty, toWire } from "../shared/protocol.ts";
 import type { HuntHost, Player, ResultCode, ServerMessage } from "../shared/protocol.ts";
 import { expireRound, joinRoom, openRoom, plantFinished, reduce, roundDeadline } from "../shared/rules.ts";
 import { log, warn } from "./command.ts";
@@ -75,7 +75,7 @@ export function createLocalHost(options: LocalHostOptions): HuntHost {
                 room = { ...openRoom(hello.roomId), difficulty: level };
             }
             commit(joinRoom(expireRound(room, now()), hello.player));
-            log(`local host open: room ${hello.roomId}, next round at level ${room.difficulty}`);
+            log(`local host open: room ${hello.roomId}, next round at level ${nextDifficulty(room)}`);
             sendSnapshot();
             return Promise.resolve();
         },

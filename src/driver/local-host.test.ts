@@ -99,13 +99,17 @@ describe("local host", () => {
         const t = setup();
         await t.open();
         t.send({ type: "round.start", board: BOARD });
-        for (const target of t.live().targets) t.send({ type: "find.claim", roundId: t.live().id, targetId: target.id });
+        const round = t.live();
+        for (const target of round.targets) t.send({ type: "find.claim", roundId: round.id, targetId: target.id });
         const ended = t.current();
         assert.equal(ended?.status === "ended" && ended.reason, "all-found");
         assert.equal(t.snapshots().at(-1)!.room.difficulty, 1);
         assert.equal(t.snapshots().at(-1)!.room.nextDifficulty, 2);
         assert.equal(t.snapshots().at(-1)!.room.league[0].roundsWon, 1);
         assert.ok(t.snapshots().at(-1)!.taunt);
+
+        t.send({ type: "find.claim", roundId: round.id, targetId: round.targets[0].id });
+        assert.equal(t.results().at(-1)!.code, "not-live", "a round that ended early did not expire");
     });
 
     it("ends the round at its deadline, however late the timer runs", async () => {
@@ -149,6 +153,29 @@ describe("local host", () => {
         t.send({ type: "round.cancel", roundId: t.live().id });
         t.send({ type: "difficulty.set", value: 4 });
         assert.equal(t.results().at(-1)!.code, "ok");
+        assert.equal(t.snapshots().at(-1)!.room.nextDifficulty, 4);
+    });
+
+    it("refuses a claim on a cancelled round as not live", async () => {
+        const t = setup();
+        await t.open();
+        t.send({ type: "round.start", board: BOARD });
+        const round = t.live();
+        t.send({ type: "round.cancel", roundId: round.id });
+        t.send({ type: "find.claim", roundId: round.id, targetId: round.targets[0].id });
+        assert.equal(t.results().at(-1)!.code, "not-live");
+    });
+
+    it("tops out at level 4: six targets in 30 seconds, and all found stays at 4", async () => {
+        const t = setup();
+        await t.open();
+        t.send({ type: "difficulty.set", value: 4 });
+        t.send({ type: "round.start", board: BOARD });
+        const round = t.live();
+        assert.equal(round.targets.length, 6);
+        assert.equal(round.endsAt - round.startedAt, 30_000);
+        for (const target of round.targets) t.send({ type: "find.claim", roundId: round.id, targetId: target.id });
+        assert.equal(t.snapshots().at(-1)!.room.difficulty, 4);
         assert.equal(t.snapshots().at(-1)!.room.nextDifficulty, 4);
     });
 
