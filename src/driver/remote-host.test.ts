@@ -125,15 +125,17 @@ describe("remote host", () => {
         assert.equal(t.sockets.length, 11);
     });
 
-    it("stops for good on an auth or version fault", async () => {
-        const t = setup();
-        t.last().accept();
-        t.last().deliver({ v: 1, type: "fault", code: "auth", retryAfterMs: 0 });
-        await assert.rejects(t.opened, (e: RoomFault) => e.code === "auth");
-        mock.timers.tick(BACKOFF_CAP_MS * 2);
-        assert.equal(t.sockets.length, 1);
-        assert.equal(t.received.at(-1)?.type, "fault");
-    });
+    for (const code of ["auth", "full"] as const) {
+        it(`stops for good on a ${code} fault`, async () => {
+            const t = setup();
+            t.last().accept();
+            t.last().deliver({ v: 1, type: "fault", code, retryAfterMs: 60_000 });
+            await assert.rejects(t.opened, (e: RoomFault) => e.code === code);
+            mock.timers.tick(BACKOFF_CAP_MS * 4);
+            assert.equal(t.sockets.length, 1);
+            assert.equal(t.received.at(-1)?.type, "fault");
+        });
+    }
 
     it("waits at least the room's retryAfterMs after a rate-limit fault", () => {
         const t = setup();

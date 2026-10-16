@@ -453,6 +453,25 @@ describe("driver", () => {
         assert.equal(sockets.length, 1, "nothing redials");
     });
 
+    it("says the room is full, leaves without redialing, and closes the notice", async () => {
+        const t = setup();
+        t.drawdy.add({ id: "hunt-1", type: "frame", ...HUNT_FRAME, meta: { iit: REMOTE_META } });
+        await t.driver.activate();
+        t.drawdy.click(t.onEvent, ACTION);
+        await pump(() => sockets.length > 0);
+        sockets[0].accept();
+        sockets[0].deliver({ v: 1, type: "fault", code: "full", retryAfterMs: 60_000 });
+        await t.flush();
+        assert.deepEqual(bannerTexts(t.drawdy), ["It's In There!", "ห้องเต็ม · This room is full"]);
+        assert.equal(sockets[0].readyState, 3, "the socket is closed");
+        assert.deepEqual([...t.drawdy.subscriptions.values()].map((s) => s.req?.domElementId), [ACTION], "only the action button stays subscribed");
+
+        mock.timers.tick(60_000);
+        await t.flush();
+        assert.equal(sockets.length, 1, "nothing redials");
+        assert.equal(t.drawdy.floating.size, 0, "the notice closed itself");
+    });
+
     it("never judges a stroke from an earlier round again", async () => {
         const t = setup();
         const room = await joinRemote(t, live("round-1", [remoteTarget(0)]));

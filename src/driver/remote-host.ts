@@ -126,7 +126,7 @@ export function createRemoteHost(options: RemoteHostOptions): HuntHost {
         ws?.close();
     };
 
-    const refuse = (code: "auth" | "version") => {
+    const refuse = (code: "auth" | "version" | "full") => {
         stop(new RoomFault(code));
         warn(`room refused this player (${code}); not reconnecting`);
     };
@@ -156,7 +156,7 @@ export function createRemoteHost(options: RemoteHostOptions): HuntHost {
             if (index >= 0) outbox.splice(index, 1);
             armWatchdog(true);
         } else if (message.type === "fault") {
-            if (message.code === "auth" || message.code === "version") refuse(message.code);
+            if (message.code === "auth" || message.code === "version" || message.code === "full") refuse(message.code);
             else retryFloorMs = message.retryAfterMs;
         }
         receive?.(message);

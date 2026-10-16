@@ -19,6 +19,7 @@ export type BannerModel = { nextLevel: number; league: { name: string; finds: nu
     | { phase: "hiding" }
     | { phase: "live"; secondsLeft: number; targets: BannerTarget[]; taunt: string | null }
     | { phase: "ended"; reason: EndReason; targets: BannerTarget[]; taunt: string | null }
+    | { phase: "full" }
 );
 
 const px = (n: number): [number, "px"] => [n, "px"];
@@ -57,6 +58,9 @@ export function bannerSchema(model: BannerModel, styling: ModuleStyling): DomEle
         case "connecting":
             header.push(smallStop);
             body.push(text("กำลังเชื่อมต่อ… · Connecting…", 13, styling.foreground, "semibold"));
+            break;
+        case "full":
+            body.push(text("ห้องเต็ม · This room is full", 13, styling.foreground, "semibold"));
             break;
         case "hiding":
             header.push(smallStop);

@@ -39,6 +39,7 @@ const models: BannerModel[] = [
     { ...base, phase: "live", secondsLeft: 42.2, targets, taunt: "It's in there. Somewhere." },
     { ...base, phase: "ended", reason: "all-found", targets, taunt: null },
     { ...base, phase: "ended", reason: "time-up", targets, taunt: "หมดเวลา!" },
+    { nextLevel: 1, league: [], phase: "full" },
 ];
 
 function walk(schema: DomElementSchema, visit: (node: DomElementSchema) => void) {

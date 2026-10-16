@@ -30,6 +30,7 @@ const DEFAULT_PLAYER_COLOR = "#698cf9";
 const REVEAL_MS = 3_000;
 const REVEAL_BLINK_MS = 250;
 const POP_SETTLE_MS = 1_200;
+const NOTICE_MS = 4_000;
 /** A hunt zone smaller than this, in canvas units, grows about its centre so stamps stay findable. */
 const MIN_ZONE = 240;
 /** The viewport zone leaves this share of the view clear on each side, so the frame is visible. */
@@ -312,7 +313,8 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         if (message.type === "result") return onResult(h, message);
         if (message.type === "fault") {
             warn(`room fault: ${message.code}`);
-            if (message.code === "auth" || message.code === "version") await leave(h);
+            if (message.code === "full") await leave(h, "full");
+            else if (message.code === "auth" || message.code === "version") await leave(h);
             return;
         }
         if (h.snapshot && message.revision <= h.snapshot.revision) return;
@@ -653,16 +655,33 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         });
     }
 
-    async function leave(h: Hunt) {
+    /** With a notice, the banner shows it for a few seconds instead of closing at once. */
+    async function leave(h: Hunt, notice: "full" | null = null) {
         if (hunt === h) hunt = null;
         h.host.close();
         await clearRound(h);
-        if (h.banner) await quietly("removing the banner", send({ type: "command:dom:remove-floating-element", req: { domId: BANNER_ID } }));
+        if (h.banner && notice) await quietly("showing why the hunt left", showNotice(h.banner, notice));
+        else if (h.banner) await quietly("removing the banner", removeBanner());
         for (const subscriptionId of h.subscriptions) {
             await quietly("unsubscribing", send({ type: "command:subscription:remove", req: { subscriptionId } }));
         }
         log("left the hunt; the frame and its markers stay on the board");
     }
+
+    async function showNotice(position: { x: number; y: number }, notice: "full") {
+        const schema = bannerSchema({ nextLevel: 1, league: [], phase: notice }, ctx.styling);
+        await send({ type: "command:dom:upsert-floating-element", req: { domId: BANNER_ID, position, schema, asPopover: false } });
+        // A hunt started since owns the banner by then.
+        setTimeout(
+            () =>
+                enqueue("closing the notice", async () => {
+                    if (!hunt) await removeBanner();
+                }),
+            NOTICE_MS
+        );
+    }
+
+    const removeBanner = () => send({ type: "command:dom:remove-floating-element", req: { domId: BANNER_ID } });
 
     async function frameRect(h: Hunt): Promise<Rect | null> {
         const { rects } = await send({ type: "command:scene:element-rects", req: { drawdyElementIds: [h.frameId] } });
