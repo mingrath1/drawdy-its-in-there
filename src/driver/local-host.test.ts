@@ -57,9 +57,10 @@ describe("local host", () => {
         assert.equal(first.self, "p1");
         assert.equal(first.room.difficulty, 2);
         assert.equal(first.room.current, null);
+        assert.deepEqual(first.room.league, [{ playerId: "p1", playerName: "Ana", finds: 0, roundsWon: 0 }]);
     });
 
-    it("starts a live round with the protocol's count and clock", async () => {
+    it("starts a live round with the protocol's count and clock, and raises the next round's level", async () => {
         const t = setup(2);
         await t.open();
         t.send({ type: "round.start", board: BOARD });
@@ -67,6 +68,8 @@ describe("local host", () => {
         assert.equal(round.targets.length, targetCount(2));
         assert.equal(round.endsAt - round.startedAt, roundDurationMs(2));
         assert.equal(t.results().at(-1)!.code, "ok");
+        assert.equal(t.snapshots().at(-1)!.room.difficulty, 3);
+        assert.ok(t.snapshots().at(-1)!.taunt, "the start comes with a taunt");
 
         t.send({ type: "round.start", board: BOARD });
         assert.equal(t.results().at(-1)!.code, "busy");
@@ -92,7 +95,7 @@ describe("local host", () => {
         assert.deepEqual(t.snapshots().at(-1)!.room.league, [{ playerId: "p1", playerName: "Ana", finds: 1, roundsWon: 0 }]);
     });
 
-    it("ends the round when everything is found and raises the difficulty", async () => {
+    it("ends the round when everything is found and credits the finder", async () => {
         const t = setup();
         await t.open();
         t.send({ type: "round.start", board: BOARD });
@@ -104,20 +107,35 @@ describe("local host", () => {
         assert.ok(t.snapshots().at(-1)!.taunt);
     });
 
-    it("ends the round when the clock runs out and keeps the difficulty", async () => {
+    it("ends the round at its deadline, however late the timer runs", async () => {
         const t = setup(3);
         await t.open();
         t.send({ type: "round.start", board: BOARD });
         const { endsAt } = t.live();
-        t.advance(roundDurationMs(3));
+        t.advance(roundDurationMs(3) + 5_000);
         const ended = t.current();
         assert.equal(ended?.status, "ended");
         assert.equal(ended?.status === "ended" && ended.reason, "time-up");
         assert.equal(ended?.status === "ended" && ended.endedAt, endsAt);
-        assert.equal(t.snapshots().at(-1)!.room.difficulty, 3);
+        assert.equal(t.snapshots().at(-1)!.room.difficulty, 4);
 
-        t.send({ type: "find.claim", roundId: ended!.id, targetId: "local-1:0" });
-        assert.equal(t.results().at(-1)!.code, "not-live");
+        t.send({ type: "find.claim", roundId: ended!.id, targetId: `${ended!.id}:0` });
+        assert.equal(t.results().at(-1)!.code, "expired");
+    });
+
+    it("plants the next round from a board offer and promotes it on the next start", async () => {
+        const t = setup();
+        await t.open();
+        t.send({ type: "round.start", board: BOARD });
+        const first = t.live();
+        t.send({ type: "board.offer", afterRoundId: first.id, board: BOARD });
+        assert.equal(t.results().at(-1)!.code, "ok");
+        const next = t.snapshots().at(-1)!.room.next;
+        assert.equal(next?.status, "ready");
+        t.send({ type: "round.cancel", roundId: first.id });
+        t.send({ type: "round.start", board: BOARD });
+        assert.equal(t.live().id, next!.id);
+        assert.equal(t.live().targets.length, targetCount(2));
     });
 
     it("lets the difficulty change only between rounds", async () => {

@@ -1,46 +1,38 @@
-// The in-process host: a whole room inside the driver, speaking the wire protocol, for play
-// without a backend. It answers like the Room Durable Object: a result per command, a full
-// snapshot per change, and stored receipts so a replayed requestId gets the same answer.
+// The in-process host: a whole room inside the driver, for play without a backend. It runs the
+// same rules as the Room Durable Object (src/shared/rules.ts) and answers the same way: a full
+// snapshot per change, a result per command, and stored receipts so a replayed requestId gets
+// its original answer. Planting is synchronous here, and a timer ends the round at its deadline.
 
-import type { LeagueEntry, Room } from "../shared/hunt.ts";
+import { bundledTaunts, momentOf } from "../../server/src/taunts.ts";
+import type { Room } from "../shared/hunt.ts";
 import { plant } from "../shared/placement.ts";
-import {
-    PROTOCOL_VERSION,
-    MAX_DIFFICULTY,
-    MIN_DIFFICULTY,
-    commandFingerprint,
-    isCommand,
-    roundDurationMs,
-    targetCount,
-    toWire,
-} from "../shared/protocol.ts";
-import type { Command, Hello, HuntHost, Player, ResultCode, ServerMessage } from "../shared/protocol.ts";
-import { allFound, claimFind, endRound, markReady, plantingRound, startRound } from "../shared/round.ts";
-import type { EndReason, RoundRejection } from "../shared/round.ts";
-import { pickTaunt } from "../shared/taunts.ts";
+import { MAX_DIFFICULTY, MIN_DIFFICULTY, PROTOCOL_VERSION, commandFingerprint, isCommand, toWire } from "../shared/protocol.ts";
+import type { HuntHost, Player, ResultCode, ServerMessage } from "../shared/protocol.ts";
+import { expireRound, joinRoom, openRoom, plantFinished, reduce, roundDeadline } from "../shared/rules.ts";
 import { log, warn } from "./command.ts";
 
 export type LocalHostOptions = {
     stampIds: string[];
+    /** The level the room's first round is planted at. */
     difficulty?: number;
     now?: () => number;
     random?: () => number;
 };
 
 export function createLocalHost(options: LocalHostOptions): HuntHost {
-    const now = options.now ?? Date.now;
+    const now = options.now ?? (() => Date.now());
     const random = options.random ?? Math.random;
-    const receipts = new Map<string, { fingerprint: string; code: ResultCode }>();
+    const receipts = new Map<string, { fingerprint: string; code: ResultCode; revision: number }>();
     let room: Room | null = null;
     let player: Player | null = null;
     let receive: ((message: ServerMessage) => void) | null = null;
     let revision = 0;
     let taunt: string | null = null;
-    let alarm: ReturnType<typeof setTimeout> | null = null;
+    let deadline: ReturnType<typeof setTimeout> | null = null;
+    let rounds = 0;
 
-    const publish = () => {
+    const sendSnapshot = () => {
         if (!room || !player) return;
-        revision++;
         receive?.({
             v: PROTOCOL_VERSION,
             type: "snapshot",
@@ -52,112 +44,39 @@ export function createLocalHost(options: LocalHostOptions): HuntHost {
         });
     };
 
-    const arm = (endsAt: number) => {
-        if (alarm) clearTimeout(alarm);
-        alarm = setTimeout(() => {
-            alarm = null;
-            if (settleOverdue(now())) publish();
-        }, Math.max(0, endsAt - now()));
-    };
-
-    // TEMPORARY: the room rules below move to src/shared/rules.ts, shared with the Room Durable
-    // Object. The coordinator swaps this block for that reducer at merge.
-    const settleOverdue = (at: number): boolean => {
-        const current = room?.current;
-        if (current?.status !== "live" || at < current.endsAt) return false;
-        finish("time-up", current.endsAt);
+    /** Commits a new room state, like the Room's publish: a new revision and the taunt for that moment. */
+    const commit = (next: Room): boolean => {
+        if (!room || next === room) return false;
+        const moment = momentOf(room, next);
+        room = next;
+        revision++;
+        taunt = moment ? bundledTaunts(moment) : null;
+        armDeadline();
         return true;
     };
 
-    const finish = (reason: EndReason, at: number) => {
-        if (!room?.current) return;
-        const ended = endRound(room.current, at, reason);
-        if (!ended.ok) return;
-        if (alarm) clearTimeout(alarm);
-        alarm = null;
-        room.current = ended.round;
-        room.roundsPlayed++;
-        if (reason === "all-found") {
-            room.difficulty = Math.min(MAX_DIFFICULTY, room.difficulty + 1);
-            const winner = topFinder(ended.round.status === "ended" ? ended.round.finds : []);
-            if (winner) leagueEntry(room.league, winner.playerId, winner.playerName).roundsWon++;
-        }
-        taunt = reason === "cancelled" ? null : pickTaunt(reason, random);
+    const armDeadline = () => {
+        if (deadline) clearTimeout(deadline);
+        deadline = null;
+        const endsAt = room ? roundDeadline(room) : undefined;
+        if (endsAt === undefined) return;
+        deadline = setTimeout(() => {
+            deadline = null;
+            if (room && commit(expireRound(room, now()))) sendSnapshot();
+        }, Math.max(0, endsAt - now()));
     };
-
-    const reduce = (command: Command, at: number): ResultCode => {
-        if (!room || !player) return "not-live";
-        settleOverdue(at);
-        const current = room.current;
-        switch (command.type) {
-            case "round.start": {
-                if (current && current.status !== "ended") return "busy";
-                const id = `local-${room.roundsPlayed + 1}-${Math.floor(random() * 1e9).toString(36)}`;
-                const targets = plant({
-                    roundId: id,
-                    seed: Math.floor(random() * 2 ** 32),
-                    difficulty: room.difficulty,
-                    count: targetCount(room.difficulty),
-                    board: command.board,
-                    stampIds: options.stampIds,
-                });
-                if (targets.length === 0) return "busy";
-                const ready = markReady(plantingRound(id, command.board.frameRect), targets);
-                const live = ready.ok ? startRound(ready.round, at, roundDurationMs(room.difficulty)) : ready;
-                if (!live.ok || live.round.status !== "live") return "busy";
-                room.current = live.round;
-                taunt = pickTaunt("start", random);
-                arm(live.round.endsAt);
-                return "ok";
-            }
-            case "board.offer":
-                // Planting here is instant, so there is nothing to prepare ahead.
-                return "ok";
-            case "find.claim": {
-                if (!current || current.id !== command.roundId) return "stale";
-                const claimed = claimFind(current, {
-                    targetId: command.targetId,
-                    playerId: player.playerId,
-                    playerName: player.name,
-                    playerColor: player.color,
-                    at,
-                });
-                if (!claimed.ok) return codeFor(claimed.rejection);
-                room.current = claimed.round;
-                leagueEntry(room.league, player.playerId, player.name).finds++;
-                taunt = pickTaunt("find", random);
-                if (allFound(claimed.round)) finish("all-found", at);
-                return "ok";
-            }
-            case "round.cancel": {
-                if (!current || current.id !== command.roundId) return "stale";
-                if (current.status === "ended") return "not-live";
-                finish("cancelled", at);
-                return "ok";
-            }
-            case "difficulty.set": {
-                if (current && current.status !== "ended") return "busy";
-                room.difficulty = command.value;
-                return "ok";
-            }
-        }
-    };
-    // End of TEMPORARY room rules.
 
     return {
-        open(hello: Hello, onMessage) {
+        open(hello, onMessage) {
             receive = onMessage;
             player = hello.player;
-            room ??= {
-                roomId: hello.roomId,
-                difficulty: Math.min(MAX_DIFFICULTY, Math.max(MIN_DIFFICULTY, Math.floor(options.difficulty ?? 1))),
-                league: [],
-                current: null,
-                next: null,
-                roundsPlayed: 0,
-            };
-            log(`local host open: room ${hello.roomId}, difficulty ${room.difficulty}`);
-            publish();
+            if (!room) {
+                const level = Math.min(MAX_DIFFICULTY, Math.max(MIN_DIFFICULTY, Math.floor(options.difficulty ?? MIN_DIFFICULTY)));
+                room = { ...openRoom(hello.roomId), difficulty: level };
+            }
+            commit(joinRoom(expireRound(room, now()), hello.player));
+            log(`local host open: room ${hello.roomId}, next round at level ${room.difficulty}`);
+            sendSnapshot();
             return Promise.resolve();
         },
         send(command) {
@@ -165,55 +84,35 @@ export function createLocalHost(options: LocalHostOptions): HuntHost {
                 warn("local host dropped an invalid command", command);
                 return;
             }
+            if (!room || !player) return;
+            const at = now();
+            const key = `${player.playerId}:${command.requestId}`;
             const fingerprint = commandFingerprint(command);
-            const receipt = receipts.get(command.requestId);
+            const receipt = receipts.get(key);
             let code: ResultCode;
+            let resultRevision: number;
             if (receipt) {
+                commit(expireRound(room, at));
                 code = receipt.fingerprint === fingerprint ? receipt.code : "request-conflict";
+                resultRevision = receipt.fingerprint === fingerprint ? receipt.revision : revision;
+                sendSnapshot();
             } else {
-                const before = JSON.stringify(room);
-                code = reduce(command, now());
-                receipts.set(command.requestId, { fingerprint, code });
-                if (JSON.stringify(room) !== before) publish();
+                const step = reduce(room, command, player, {
+                    now: at,
+                    fresh: { roundId: `local-${++rounds}-${Math.floor(random() * 2 ** 32).toString(36)}`, seed: Math.floor(random() * 2 ** 32) },
+                    stampIds: options.stampIds,
+                });
+                const planted = step.plant ? plantFinished(step.room, step.plant.roundId, plant(step.plant)) : step.room;
+                const changed = commit(planted);
+                code = step.code;
+                resultRevision = revision;
+                receipts.set(key, { fingerprint, code, revision });
+                if (changed) sendSnapshot();
             }
-            receive?.({ v: PROTOCOL_VERSION, type: "result", requestId: command.requestId, command: command.type, code, revision });
+            receive?.({ v: PROTOCOL_VERSION, type: "result", requestId: command.requestId, command: command.type, code, revision: resultRevision });
         },
         close() {
             receive = null;
         },
     };
-}
-
-function codeFor(rejection: RoundRejection): ResultCode {
-    switch (rejection.kind) {
-        case "illegal-transition":
-            return "not-live";
-        case "unknown-target":
-            return "unknown-target";
-        case "already-found":
-            return "taken";
-        case "too-late":
-            return "expired";
-    }
-}
-
-function leagueEntry(league: LeagueEntry[], playerId: string, playerName: string): LeagueEntry {
-    let entry = league.find((e) => e.playerId === playerId);
-    if (!entry) {
-        entry = { playerId, playerName, finds: 0, roundsWon: 0 };
-        league.push(entry);
-    }
-    return entry;
-}
-
-function topFinder(finds: { playerId: string; playerName: string }[]) {
-    const counts = new Map<string, { playerId: string; playerName: string; n: number }>();
-    for (const f of finds) {
-        const c = counts.get(f.playerId) ?? { playerId: f.playerId, playerName: f.playerName, n: 0 };
-        c.n++;
-        counts.set(f.playerId, c);
-    }
-    let best: { playerId: string; playerName: string; n: number } | null = null;
-    for (const c of counts.values()) if (!best || c.n > best.n) best = c;
-    return best;
 }
