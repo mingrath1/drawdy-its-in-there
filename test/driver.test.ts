@@ -655,4 +655,26 @@ describe("driver", () => {
         await t.flush();
         assert.equal(upserts(), before, "the countdown stopped");
     });
+
+    it("sends one round.start however often Start is clicked while it is pending", async () => {
+        const t = setup();
+        const room = await joinRemote(t, null);
+        assert.equal(room.sent("round.start").length, 1, "an idle room gets a round.start on joining");
+        t.drawdy.click(t.onEvent, NEXT_BUTTON_ID);
+        t.drawdy.click(t.onEvent, NEXT_BUTTON_ID);
+        await t.flush();
+        assert.equal(room.sent("round.start").length, 1, "extra clicks are ignored while it is pending");
+        const [start] = room.sent("round.start");
+        room.socket.deliver({ v: 1, type: "result", requestId: start.requestId, command: "round.start", code: "busy", revision: 1 });
+        await t.flush();
+        t.drawdy.click(t.onEvent, NEXT_BUTTON_ID);
+        await t.flush();
+        assert.equal(room.sent("round.start").length, 2, "its answer frees Start again");
+        room.snapshot({ status: "planting", id: "round-1", frameRect: HUNT_FRAME });
+        room.snapshot(ended(live("round-1"), "time-up"));
+        await t.flush();
+        t.drawdy.click(t.onEvent, NEXT_BUTTON_ID);
+        await t.flush();
+        assert.equal(room.sent("round.start").length, 3, "so does a snapshot showing the round it started");
+    });
 });

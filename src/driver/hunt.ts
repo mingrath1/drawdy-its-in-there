@@ -79,6 +79,8 @@ type Hunt = {
     /** The board our last round.start sent, offered once more to plant the next round while this one plays. */
     offerBoard: BoardSnapshot | null;
     startOnOpen: boolean;
+    /** The requestId of a round.start the room has neither answered nor acted on, so Start is not sent twice. */
+    starting: string | null;
     round: RoundView | null;
     /**
      * Fingerprints of the laser strokes already seen, judged or not, across rounds. Null until the
@@ -158,6 +160,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             taunt: null,
             offerBoard: null,
             startOnOpen: true,
+            starting: null,
             round: null,
             strokes: null,
             claims: new Map(),
@@ -329,6 +332,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         }
         if (h.snapshot && message.revision <= h.snapshot.revision) return;
         h.snapshot = message;
+        if (isRunning(message.room.current)) h.starting = null;
         h.clockSkew = message.serverNow - Date.now();
         if (message.taunt) h.taunt = message.taunt;
         const current = message.room.current;
@@ -357,6 +361,10 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             log("a round is already running");
             return;
         }
+        if (h.starting) {
+            log("a round is already on its way; click ignored");
+            return;
+        }
         const rect = await frameRect(h);
         if (!rect) {
             warn("the hunt frame is gone; leaving the hunt");
@@ -368,7 +376,8 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         const points = board.items.reduce((n, i) => n + (i.points?.length ?? 0), 0);
         log(`asking for a round: board has ${board.items.length} items and ${points} points`);
         h.offerBoard = board;
-        h.host.send({ v: PROTOCOL_VERSION, type: "round.start", requestId: nextRequestId(), board });
+        h.starting = nextRequestId();
+        h.host.send({ v: PROTOCOL_VERSION, type: "round.start", requestId: h.starting, board });
     }
 
     async function renderRound(h: Hunt, current: WireRound | null) {
@@ -538,6 +547,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
     }
 
     async function onResult(h: Hunt, result: Result) {
+        if (result.requestId === h.starting) h.starting = null;
         const claim = h.claims.get(result.requestId);
         if (!claim) {
             log(`${result.command} answered ${result.code}`);
