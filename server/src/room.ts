@@ -300,8 +300,9 @@ export class Room extends DurableObject<Env> {
 
   async #expireOverdueRound(): Promise<void> {
     const open = (await this.#harness.snapshot(HuntDoc, context))?.open ?? null;
-    if (open === null || roundDeadline(open.room) === undefined) return;
+    const deadline = open === null ? undefined : roundDeadline(open.room);
     const now = Date.now();
+    if (deadline === undefined || now < deadline) return;
     await this.#harness.commit(async (tx) => {
       const doc = await tx.doc(HuntDoc);
       if (doc.open === null) return;

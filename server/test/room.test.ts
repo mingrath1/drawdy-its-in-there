@@ -254,6 +254,31 @@ describe("rounds", () => {
     client.close();
   });
 
+  it("commits nothing when the alarm fires before the round's deadline", async () => {
+    const keys = roomKeys();
+    const stub = env.ROOMS.getByName(keys.roomId);
+    const { client } = await joined(keys, alice);
+    await startLive(client);
+    // Harness is a factory, so find the prototype every harness commits through on a throwaway one.
+    const committer = await runInDurableObject(stub, async (_instance, state) => {
+      const harness = await Harness.open(
+        await openDurableObjectSqliteStorage(state.storage),
+        huntHarnessOptions(() => {}),
+        BACKGROUND_CONTEXT,
+      );
+      await harness.close(BACKGROUND_CONTEXT);
+      let owner: object = harness;
+      while (!Object.hasOwn(owner, "commit")) owner = Object.getPrototypeOf(owner) as object;
+      return owner as Pick<typeof harness, "commit">;
+    });
+    await runInDurableObject(stub, (_instance, state) => state.storage.setAlarm(Date.now() + 10_000));
+    const commits = vi.spyOn(committer, "commit");
+
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    expect(commits).not.toHaveBeenCalled();
+    client.close();
+  });
+
   it("scores a target once when two players claim it in the same tick", async () => {
     const keys = roomKeys();
     const { client: a } = await joined(keys, alice);
