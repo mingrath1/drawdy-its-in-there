@@ -1,0 +1,38 @@
+
+> its-in-there@0.1.0 dev
+> vite --port 5183
+
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vite-plugin-drawdy" without a file extension (vite.config.ts:2:33). Add the file extension
+  - import "./bundle" without a file extension (vite-plugin-drawdy.ts:4:32). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+  VITE v8.3.4  ready in 1263 ms
+
+  ➜  Local:   http://localhost:5183/
+  ➜  Network: use --host to expose
+[drawdy] built v1 (mingrath1.its-in-there, 30871 bytes)
+[drawdy] built v2 (mingrath1.its-in-there, 30871 bytes)
+[drawdy] built v3 (mingrath1.its-in-there, 30871 bytes)
+[drawdy] built v4 (mingrath1.its-in-there, 30871 bytes)
+[drawdy] built v5 (mingrath1.its-in-there, 30871 bytes)
+[drawdy] built v6 (mingrath1.its-in-there, 30871 bytes)
+[drawdy] built v7 (mingrath1.its-in-there, 30871 bytes)
+[drawdy] built v8 (mingrath1.its-in-there, 30871 bytes)
+[drawdy] built v9 (mingrath1.its-in-there, 30871 bytes)
+[drawdy] built v10 (mingrath1.its-in-there, 30871 bytes)
+[drawdy] built v11 (mingrath1.its-in-there, 30871 bytes)
+[drawdy] built v12 (mingrath1.its-in-there, 30871 bytes)
+[drawdy] built v13 (mingrath1.its-in-there, 30871 bytes)
+[drawdy] built v14 (mingrath1.its-in-there, 30871 bytes)
+[drawdy] built v15 (mingrath1.its-in-there, 30871 bytes)
+[drawdy] built v16 (mingrath1.its-in-there, 30871 bytes)
+[drawdy] built v17 (mingrath1.its-in-there, 30871 bytes)
+[drawdy] built v18 (mingrath1.its-in-there, 30871 bytes)
+[drawdy] built v19 (mingrath1.its-in-there, 30871 bytes)
+[drawdy] built v20 (mingrath1.its-in-there, 30871 bytes)
+[drawdy] built v21 (mingrath1.its-in-there, 30871 bytes)
+[drawdy] built v22 (mingrath1.its-in-there, 30871 bytes)
+[drawdy] built v23 (mingrath1.its-in-there, 30871 bytes)
+[drawdy] built v24 (mingrath1.its-in-there, 30871 bytes)
+[drawdy] built v25 (mingrath1.its-in-there, 30871 bytes)
