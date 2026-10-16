@@ -44,7 +44,7 @@ const RECOVERY_ALARM_DELAY_MS = 60_000;
 /** No round can end sooner than this after it starts, so an alarm pre-armed this far ahead is never late. */
 const EARLIEST_DEADLINE_MS = roundDurationMs(MAX_DIFFICULTY);
 const RATE_LIMIT = { perSecond: 10, burst: 20, retryAfterMs: 1_000 };
-const MAX_PLAYERS_ONLINE = 32;
+export const MAX_PLAYERS_ONLINE = 32;
 const STAMP_IDS = STAMP_PACK.map((stamp) => stamp.id);
 const ROOM_PATH = /^\/rooms\/([A-Za-z0-9:_-]{1,128})\/?$/;
 
@@ -193,32 +193,32 @@ export class Room extends DurableObject<Env> {
     reportError("Room WebSocket failed", error);
   }
 
-  /** The first hello to an empty room creates it. Its id commits to the token, so only a token holder gets this far. */
+  /**
+   * The first hello to an empty room creates it. Its id commits to the token, so only a token holder gets this far.
+   * Commits run one at a time, so admitting and attaching the player inside one keeps racing hellos under both caps.
+   */
   async #hello(socket: WebSocket, hello: Hello): Promise<void> {
     const state = connectionState(socket);
     if (state.player !== undefined) return this.#fault(socket, "invalid", 1002);
     if (hello.roomId !== state.roomId || hello.roomId !== deriveRoomId(hello.joinToken)) {
       return this.#fault(socket, "auth", 1008);
     }
-    if (this.#players().length >= MAX_PLAYERS_ONLINE) {
-      return this.#fault(socket, "full", 1008, RECOVERY_ALARM_DELAY_MS);
-    }
+    const { player } = hello;
     const now = Date.now();
     // Plant tasks belong to a conversation, so the root one must exist.
     await this.#harness.root(context);
     const open = await this.#harness.commit(async (tx) => {
       const doc = await tx.doc(HuntDoc);
-      doc.open ??= { revision: 0, taunt: null, room: openRoom(hello.roomId) };
-      const before = plain<RoomState>(doc.open.room);
-      if (!canJoin(before, hello.player.playerId)) return null;
-      const after = joinRoom(expireRound(before, now), hello.player);
+      const before = doc.open === null ? openRoom(hello.roomId) : plain<RoomState>(doc.open.room);
+      if (!canJoin(before, player.playerId) || !this.#hasPlaceOnline(player.playerId)) return null;
+      socket.serializeAttachment({ ...state, player } satisfies ConnectionState);
+      doc.open ??= { revision: 0, taunt: null, room: before };
+      const after = joinRoom(expireRound(before, now), player);
       publish(doc.open, before, after, this.#tauntFor(before, after));
       return plain<OpenRoom>(doc.open);
     }, context);
     if (open === null) return this.#fault(socket, "full", 1008, RECOVERY_ALARM_DELAY_MS);
-
-    socket.serializeAttachment({ ...state, player: hello.player } satisfies ConnectionState);
-    this.#send(socket, snapshot(open, hello.player.playerId, null));
+    this.#send(socket, snapshot(open, player.playerId, null));
     await this.#refreshAlarmAfterReply();
   }
 
@@ -319,6 +319,12 @@ export class Room extends DurableObject<Env> {
     } catch {
       // The socket may already have closed.
     }
+  }
+
+  /** A player already online may open another connection. A new one needs a free place. */
+  #hasPlaceOnline(playerId: string): boolean {
+    const online = new Set(this.#players().map(({ player }) => player.playerId));
+    return online.has(playerId) || online.size < MAX_PLAYERS_ONLINE;
   }
 
   #players(): Array<{ socket: WebSocket; player: Player }> {

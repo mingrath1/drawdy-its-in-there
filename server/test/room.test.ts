@@ -6,7 +6,14 @@ import { openDurableObjectSqliteStorage } from "@earendil-works/pi-durable/stora
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BoardSnapshot } from "../../src/shared/hunt.ts";
 import { HuntDoc, huntHarnessOptions, plain } from "../src/durable.ts";
-import { MAX_FRAME_CHARS, MAX_LEAGUE, roundDurationMs, targetCount } from "../../src/shared/protocol.ts";
+import { MAX_PLAYERS_ONLINE } from "../src/room.ts";
+import {
+  MAX_FRAME_CHARS,
+  MAX_LEAGUE,
+  roundDurationMs,
+  type ServerMessage,
+  targetCount,
+} from "../../src/shared/protocol.ts";
 import {
   alice,
   board,
@@ -116,6 +123,38 @@ describe("room access", () => {
     expect(first.room.league.some(({ playerId }) => playerId === `p${MAX_LEAGUE}`)).toBe(false);
     back.close();
   }, 30_000);
+
+  it("admits at most MAX_PLAYERS_ONLINE distinct players when hellos race", async () => {
+    const keys = roomKeys();
+    const player = (i: number) => ({ playerId: `p${i}`, name: `Player ${i}`, color: "#698cf9" });
+    const online = [];
+    for (let i = 0; i < MAX_PLAYERS_ONLINE - 1; i++) online.push((await joined(keys, player(i))).client);
+
+    const racers = await Promise.all([connect(keys.roomId), connect(keys.roomId), connect(keys.roomId)]);
+    racers.forEach((racer, i) =>
+      racer.send({ v: 1, type: "hello", roomId: keys.roomId, joinToken: keys.joinToken, player: player(100 + i) }),
+    );
+    const outcomes = await Promise.all(
+      racers.map((racer) =>
+        racer.waitFor((m): m is ServerMessage => m.type === "snapshot" || (m.type === "fault" && m.code === "full")),
+      ),
+    );
+    expect(outcomes.map(({ type }) => type).toSorted()).toEqual(["fault", "fault", "snapshot"]);
+    for (const client of [...online, ...racers.filter((_, i) => outcomes[i]!.type === "snapshot")]) client.close();
+  }, 20_000);
+
+  it("counts a player with two connections once against MAX_PLAYERS_ONLINE", async () => {
+    const keys = roomKeys();
+    const player = (i: number) => ({ playerId: `p${i}`, name: `Player ${i}`, color: "#698cf9" });
+    const online = [];
+    for (let i = 0; i < MAX_PLAYERS_ONLINE; i++) online.push((await joined(keys, player(i))).client);
+
+    const { client: second } = await joined(keys, player(0));
+    const late = await connect(keys.roomId);
+    late.send({ v: 1, type: "hello", roomId: keys.roomId, joinToken: keys.joinToken, player: player(MAX_PLAYERS_ONLINE) });
+    await late.waitFor(faultCoded("full"));
+    for (const client of [...online, second]) client.close();
+  }, 20_000);
 
   it("refuses commands before hello", async () => {
     const client = await connect(roomKeys().roomId);
