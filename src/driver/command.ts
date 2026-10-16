@@ -44,12 +44,12 @@ const PERMISSIONS = {
 /** Probed on a live board (docs/FACTS.md): these never prompt, so they say nothing about a permission. */
 const NEVER_PROMPTS: ReadonlySet<string> = new Set(["command:dom:create-action-button", "subscription:dom:element-clicked"]);
 
-export const COMMAND_TIMEOUT_MS = 8_000;
+const COMMAND_TIMEOUT_MS = 8_000;
 /** The first command behind a permission waits while the user reads Drawdy's permission dialog. */
-export const PROMPT_TIMEOUT_MS = 120_000;
+const PROMPT_TIMEOUT_MS = 120_000;
 
-export type CommandType = keyof typeof PERMISSIONS;
-export type CommandRequest = DistributiveOmit<
+type CommandType = keyof typeof PERMISSIONS;
+type CommandRequest = DistributiveOmit<
     Extract<DriverCommandRequest, { type: CommandType }>,
     "driverId" | "requestId"
 >;

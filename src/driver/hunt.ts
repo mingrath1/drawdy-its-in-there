@@ -35,7 +35,6 @@ const DIFFICULTY_KEY = "local-difficulty";
 const MIN_ZONE = 240;
 /** The viewport zone leaves this share of the view clear on each side, so the frame is visible. */
 const VIEW_INSET = 0.1;
-/** Room left around a selection. */
 const SELECTION_PADDING = 24;
 
 export type DriverContext = { send: Send; generateId: () => string; styling: ModuleStyling };
@@ -103,8 +102,6 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             (error) => warn(`${label} failed:`, error instanceof Error ? error.message : error)
         );
     const nextRequestId = () => `c-${Date.now().toString(36)}-${requestSeq++}`;
-
-    // ---------- the click ----------
 
     async function onActionClick() {
         const current = hunt;
@@ -296,8 +293,6 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         }
     }
 
-    // ---------- the room ----------
-
     async function onMessage(h: Hunt, message: ServerMessage) {
         if (hunt !== h) return;
         if (message.type === "result") return onResult(h, message);
@@ -441,8 +436,6 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         }
     }
 
-    // ---------- finding ----------
-
     async function judgeStrokes(h: Hunt, lasers: readonly (readonly [number, number])[][]) {
         const view = h.round;
         const current = h.snapshot?.room.current;
@@ -507,8 +500,6 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             POP_SETTLE_MS
         );
     }
-
-    // ---------- tools, banner, teardown ----------
 
     async function toLaser(h: Hunt) {
         if (h.toolToRestore !== null) return;

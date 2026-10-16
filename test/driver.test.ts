@@ -6,13 +6,12 @@ import { afterEach, beforeEach, describe, it, mock } from "node:test";
 import type { DriverManifest, ModuleStyling } from "@drawdy/driver-protocol";
 import { activate } from "../src/index.ts";
 import { createSend } from "../src/driver/command.ts";
-import { createHuntDriver } from "../src/driver/hunt.ts";
+import { ACTION_BUTTON_ID as ACTION, createHuntDriver } from "../src/driver/hunt.ts";
 import { NEXT_BUTTON_ID, STOP_BUTTON_ID } from "../src/driver/banner.ts";
 import { parseFrameMeta, roundDurationMs, targetCount } from "../src/shared/protocol.ts";
 import { FakeDrawdy } from "./fake-drawdy.ts";
 import { FakeSocket } from "./fake-socket.ts";
 
-const ACTION = "iit:action";
 const STYLING = {
     theme: "dark",
     background: "#09090b",

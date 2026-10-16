@@ -10,11 +10,10 @@ import type { Rect, Stamp, Target } from "../shared/hunt.ts";
 export type Point = [number, number];
 
 /** A turn sharper than this, in degrees, ends one line and starts the next. */
-export const CORNER_DEG = 55;
+const CORNER_DEG = 55;
 /** The found marker circles the stamp with this much room to spare. */
 const MARKER_PADDING = 1.35;
 
-/** The stamp's strokes in canvas space, tilted about the target's centre and split at sharp corners. */
 export function stampRuns(stamp: Stamp, target: Target): Point[][] {
     const { x, y, width, height } = target.rect;
     const cx = x + width / 2;
@@ -90,7 +89,6 @@ export function foundMarker(args: {
     };
 }
 
-/** The marker pops in: scales up past full size, settles, and fades in on the way. */
 export const FOUND_POP: LocalAnimation = {
     time: { durationMs: 550, curve: "ease-in-out", repeat: "none" },
     animation: {

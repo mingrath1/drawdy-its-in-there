@@ -11,7 +11,7 @@ import type { HuntHost, Player, ResultCode, ServerMessage } from "../shared/prot
 import { expireRound, joinRoom, openRoom, plantFinished, reduce, roundDeadline } from "../shared/rules.ts";
 import { log, warn } from "./command.ts";
 
-export type LocalHostOptions = {
+type LocalHostOptions = {
     stampIds: string[];
     /** The level the room's first round is planted at. */
     difficulty?: number;

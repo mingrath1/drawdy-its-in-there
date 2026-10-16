@@ -1,5 +1,4 @@
 // The floating banner: goal, countdown, finds, and the host's taunt, in Thai and English.
-// Pure: a model in, a DomElementSchema out.
 
 import type { DomElementSchema, ModuleStyling } from "@drawdy/driver-protocol";
 import type { EndReason } from "../shared/round.ts";
@@ -11,7 +10,7 @@ export const BANNER_WIDTH = 360;
 /** Below Drawdy's top-centre toolbar. */
 export const BANNER_TOP = 72;
 
-export type BannerTarget = { label: string; labelTh?: string; foundColor: string | null };
+type BannerTarget = { label: string; labelTh?: string; foundColor: string | null };
 
 /** `nextLevel` is the room's difficulty: the level the next round is planted at. */
 export type BannerModel = { nextLevel: number; league: { name: string; finds: number }[] } & (

@@ -23,7 +23,7 @@ const usableColor = (v: unknown): v is string =>
     typeof v === "string" && v.length > 0 && v.length <= 64 && !/[\u0000-\u001f\u007f]/.test(v);
 
 /** Our own scene writes (hunt frames, found markers) are not part of the board. */
-export function isOurs(element: SubscribedDrawdyElement): boolean {
+function isOurs(element: SubscribedDrawdyElement): boolean {
     const meta = element.meta;
     return typeof meta === "object" && meta !== null && ("iit" in meta || "iitFound" in meta);
 }
@@ -75,7 +75,6 @@ function kindOf(e: SubscribedDrawdyElement): BoardItem["kind"] {
     }
 }
 
-/** Keeps the first and last point and evenly spaced ones between. */
 function thin(points: [number, number][], max: number): [number, number][] {
     if (points.length <= max) return points;
     const out: [number, number][] = [];

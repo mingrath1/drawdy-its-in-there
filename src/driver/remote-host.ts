@@ -6,9 +6,9 @@ import { encode, isCommand, parseServer, ProtocolError } from "../shared/protoco
 import type { Command, Fault, Hello, HuntHost, ServerMessage } from "../shared/protocol.ts";
 import { log, warn } from "./command.ts";
 
-export const BACKOFF_BASE_MS = 500;
+const BACKOFF_BASE_MS = 500;
 export const BACKOFF_CAP_MS = 30_000;
-export const OPEN_TIMEOUT_MS = 15_000;
+const OPEN_TIMEOUT_MS = 15_000;
 const OPEN = 1;
 
 /** The slice of WebSocket this host uses, so tests can hand it a fake. */
@@ -22,14 +22,14 @@ export type RoomSocket = {
     onerror: ((event: unknown) => void) | null;
 };
 
-export type RemoteHostOptions = {
+type RemoteHostOptions = {
     backendUrl: string;
     roomId: string;
     connect?: (url: string) => RoomSocket;
     random?: () => number;
 };
 
-export function roomSocketUrl(backendUrl: string, roomId: string): string {
+function roomSocketUrl(backendUrl: string, roomId: string): string {
     return `${backendUrl.replace(/^http/, "ws").replace(/\/+$/, "")}/rooms/${encodeURIComponent(roomId)}`;
 }
 
