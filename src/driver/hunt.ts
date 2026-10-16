@@ -381,8 +381,13 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         const offset = { dx: h.frameRect.x - round.frameRect.x, dy: h.frameRect.y - round.frameRect.y };
         const view: RoundView = { id: round.id, targets: new Map(), painted: new Set(), ended: false, reveal: null };
         for (const planted of round.targets) {
+            const stamp = stamps.get(planted.stampId);
+            if (!stamp) {
+                warn(`skipped target ${planted.id}: this driver has no stamp ${planted.stampId}`);
+                continue;
+            }
             const target = shifted(planted, offset);
-            const runs = stampRuns(stamps.get(target.stampId) ?? STAMP_PACK[0], target);
+            const runs = stampRuns(stamp, target);
             const ids = runs.map(() => ctx.generateId());
             const tv: TargetView = { target, runs, ids, previewId: null };
             view.targets.set(target.id, tv);

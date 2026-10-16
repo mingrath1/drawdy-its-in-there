@@ -499,4 +499,14 @@ describe("driver", () => {
         await t.flush();
         assert.deepEqual(room.sent("find.claim").map((c) => c.targetId), ["t1"]);
     });
+
+    it("skips a target whose stamp this driver lacks, and never claims it", async () => {
+        const t = setup();
+        const room = await joinRemote(t, live("round-9", [remoteTarget(0), remoteTarget(1, "no-such-stamp"), remoteTarget(2)]));
+        assert.equal(drawnTargets(t.drawdy).length, 2, "only the stamps it has are drawn");
+        assert.ok(warnings.some((w) => w.join(" ").includes("no-such-stamp")), "the skip is logged");
+        laser(t, [circleTarget(1)]);
+        await t.flush();
+        assert.equal(room.sent("find.claim").length, 0);
+    });
 });
