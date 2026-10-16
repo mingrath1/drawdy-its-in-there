@@ -10,6 +10,7 @@ import { createHuntDriver } from "../src/driver/hunt.ts";
 import { NEXT_BUTTON_ID, STOP_BUTTON_ID } from "../src/driver/banner.ts";
 import { parseFrameMeta, roundDurationMs, targetCount } from "../src/shared/protocol.ts";
 import { FakeDrawdy } from "./fake-drawdy.ts";
+import { FakeSocket } from "./fake-socket.ts";
 
 const ACTION = "iit:action";
 const STYLING = {
@@ -240,6 +241,113 @@ describe("driver", () => {
         moved.drawdy.emit(moved.onEvent, "subscription:tool:laser", { type: "laser-state-update", lasers: [loopAround(moved.targets[0])] });
         await moved.flush();
         assert.equal(markers(moved.drawdy).length, 1);
+    });
+
+    it("joins a remote room from its frame and marks only finds the room confirmed, once", async () => {
+        const sockets: FakeSocket[] = [];
+        const realWebSocket = globalThis.WebSocket;
+        globalThis.WebSocket = class extends FakeSocket {
+            constructor(url: string) {
+                super(url);
+                sockets.push(this);
+            }
+        } as unknown as typeof WebSocket;
+        try {
+        const { drawdy, driver, onEvent, flush } = setup();
+        const frameRect = { x: 200, y: 100, width: 1000, height: 700 };
+        const meta = { v: 1, roomId: "room-remote", joinToken: "ab".repeat(32), backendUrl: "https://iit.example.workers.dev" };
+        drawdy.add({ id: "hunt-1", type: "frame", ...frameRect, meta: { iit: meta } });
+        const target = (i: number) => ({
+            id: `t${i}`,
+            stampId: "cat-face",
+            rect: { x: 300 + i * 250, y: 300, width: 80, height: 80 },
+            rotationDeg: 0,
+            strokeColor: "#e4e4e7",
+            strokeWidth: 2,
+        });
+        const now = Date.now();
+        const live = { status: "live", id: "round-9", frameRect, targets: [0, 1, 2].map(target), startedAt: now, endsAt: now + 60_000 };
+        const find = (i: number, playerId: string, playerName: string, playerColor: string) => ({ targetId: `t${i}`, playerId, playerName, playerColor, at: now + i });
+        let revision = 0;
+        const snapshot = (current: unknown, at = ++revision) => ({
+            v: 1,
+            type: "snapshot",
+            revision: at,
+            serverNow: Date.now(),
+            self: "u-ana",
+            room: { roomId: "room-remote", difficulty: 3, league: [], current, next: null, roundsPlayed: 4 },
+            taunt: "go",
+        });
+        const answer = (code: string) => {
+            const claim = sockets[0].sent.at(-1) as { type: string; requestId: string; targetId: string };
+            assert.equal(claim.type, "find.claim");
+            sockets[0].deliver({ v: 1, type: "result", requestId: claim.requestId, command: "find.claim", code, revision });
+            return claim.targetId;
+        };
+        const circle = (i: number) => loopAround({ cx: 340 + i * 250, cy: 340, w: 80, h: 80 });
+
+        await driver.activate();
+        drawdy.click(onEvent, ACTION);
+        // The click waits on the room's first snapshot, so pump until the socket exists instead of flushing.
+        for (let i = 0; i < 200 && sockets.length === 0; i++) await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(frames(drawdy).length, 1, "no new frame: the one in view is joined");
+        assert.equal(sockets[0].url, "wss://iit.example.workers.dev/rooms/room-remote");
+        sockets[0].accept();
+        assert.deepEqual(sockets[0].sent, [
+            { v: 1, type: "hello", roomId: "room-remote", joinToken: meta.joinToken, player: { playerId: "u-ana", name: "Ana", color: "#ff4d4d" } },
+        ]);
+        sockets[0].deliver(snapshot({ ...live, finds: [] }));
+        await flush();
+        assert.equal(drawnTargets(drawdy).length, 3);
+        assert.equal(drawdy.tool, "laser-pointer");
+        assert.equal(sockets[0].sent.length, 1, "a live room gets no round.start");
+
+        const strokes = [circle(0)];
+        drawdy.emit(onEvent, "subscription:tool:laser", { type: "laser-state-update", lasers: strokes });
+        await flush();
+        assert.equal(answer("taken"), "t0");
+        sockets[0].deliver(snapshot({ ...live, finds: [find(0, "u-ben", "Ben", "#22c55e")] }));
+        await flush();
+        assert.equal(markers(drawdy).length, 0, "a lost claim writes no marker");
+        assert.ok(drawnTargets(drawdy)[0].batch.every((e: any) => e.strokeColor === "#22c55e"), "Ben's find shows in Ben's colour");
+
+        strokes.push(circle(1));
+        drawdy.emit(onEvent, "subscription:tool:laser", { type: "laser-state-update", lasers: strokes });
+        await flush();
+        assert.equal(answer("ok"), "t1");
+        await flush();
+        assert.deepEqual(markers(drawdy).map((m) => m.meta.iitFound), ["round-9:t1"]);
+        assert.equal(markers(drawdy)[0].frameId, "hunt-1");
+
+        drawdy.add({ id: "other-tab-marker", type: "path", x: 800, y: 300, width: 100, height: 100, meta: { iitFound: "round-9:t2" } });
+        strokes.push(circle(2));
+        drawdy.emit(onEvent, "subscription:tool:laser", { type: "laser-state-update", lasers: strokes });
+        await flush();
+        assert.equal(answer("ok"), "t2");
+        await flush();
+        assert.equal(markers(drawdy).filter((m) => m.meta.iitFound === "round-9:t2").length, 1, "an existing tag is not written twice");
+
+        sockets[0].deliver(
+            snapshot({
+                ...{ ...live, endsAt: undefined },
+                status: "ended",
+                endedAt: Date.now(),
+                reason: "all-found",
+                finds: [find(0, "u-ben", "Ben", "#22c55e"), find(1, "u-ana", "Ana", "#ff4d4d"), find(2, "u-ana", "Ana", "#ff4d4d")],
+            })
+        );
+        await flush();
+        assert.equal(drawdy.tool, "pencil");
+        assert.ok(bannerTexts(drawdy).includes("เจอครบ! · All found!"));
+
+        sockets[0].deliver(snapshot({ ...live, finds: [] }, 1));
+        await flush();
+        assert.equal(drawdy.tool, "pencil", "a stale snapshot is ignored");
+        assert.ok(bannerTexts(drawdy).includes("เจอครบ! · All found!"));
+        assert.deepEqual(warnings, []);
+        } finally {
+            globalThis.WebSocket = realWebSocket;
+        }
     });
 
     it("does nothing more when the scene permission is denied", async () => {
