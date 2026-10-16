@@ -625,6 +625,33 @@ describe("driver", () => {
         assert.equal(markers(t.drawdy).length, 1, "and only once");
     });
 
+    it("keeps one marker when two tabs of the same player mark a find at once", async () => {
+        const tab1 = setup();
+        const board = new FakeDrawdy();
+        board.elements = tab1.drawdy.elements;
+        let seq = 0;
+        board.generateId = () => `tab2-${seq++}`;
+        const tab2 = setup(board);
+        const room1 = await joinRemote(tab1, live());
+        const room2 = await joinRemote(tab2, live());
+        room1.snapshot(live("round-9", undefined, [findBy(0)]));
+        room2.snapshot(live("round-9", undefined, [findBy(0)]));
+        await Promise.all([tab1.flush(), tab2.flush()]);
+        const written = [tab1, tab2]
+            .flatMap((tab) => tab.drawdy.commands)
+            .filter((c) => c.type === "command:scene:add-drawdy-elements" && c.req.elements[0].meta?.iitFound)
+            .map((c) => c.req.elements[0].drawdyElementId as string);
+        assert.equal(written.length, 2, "both tabs wrote the marker");
+        assert.deepEqual(markers(board).map((m) => m.id), [written.sort()[0]], "the smallest id stays");
+    });
+
+    it("removes extra copies of one of our markers on the next snapshot, keeping the smallest id", async () => {
+        const t = setup();
+        for (const id of ["m-2", "m-1", "m-3"]) t.drawdy.add({ id, type: "path", x: 300, y: 300, width: 80, height: 80, meta: { iitFound: "round-9:t0" } });
+        await joinRemote(t, live("round-9", undefined, [findBy(0)]));
+        assert.deepEqual(markers(t.drawdy).map((m) => m.id), ["m-1"]);
+    });
+
     it("still writes a missing marker from the last ended round after the next one starts", async () => {
         const t = setup();
         t.failOnce((r) => r.type === "command:scene:add-drawdy-elements");

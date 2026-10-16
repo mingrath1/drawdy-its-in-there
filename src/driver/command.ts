@@ -28,6 +28,7 @@ const PERMISSIONS = {
     "command:scene:query-rect": "scene",
     "command:scene:element-rects": "scene",
     "command:scene:add-drawdy-elements": "scene",
+    "command:scene:remove-drawdy-elements": "scene",
     "command:scene:update-drawdy-elements": "scene",
     "command:scene:create-drawdy-preview-elements": "scene",
     "command:scene:update-drawdy-preview-elements": "scene",

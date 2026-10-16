@@ -121,6 +121,11 @@ export class FakeDrawdy {
                 }
                 return undefined;
             }
+            case "command:scene:remove-drawdy-elements": {
+                let removed = 0;
+                for (const id of r.req.drawdyElementIds) if (this.elements.delete(id)) removed++;
+                return { removed };
+            }
             case "command:scene:update-drawdy-elements": {
                 for (const u of r.req.updates) Object.assign(this.elements.get(u.drawdyElementId)!, u.properties);
                 return { updated: r.req.updates.length };

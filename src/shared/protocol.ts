@@ -12,8 +12,12 @@
 // - Targets of a round stay off the wire until the round is live (toWire).
 // - Target rects are canvas coordinates at plant time. If the hunt frame moved since,
 //   render at target.rect offset by (frameNow.x - round.frameRect.x, frameNow.y - round.frameRect.y).
-// - Only the driver whose claim returned "ok" writes the scene's found marker, tagged
-//   meta.iitFound = "<roundId>:<targetId>", after checking no element already has that tag.
+// - Found markers follow the snapshots. On each one, a player's driver gives every find of
+//   theirs in the current or last ended round a scene marker tagged
+//   meta.iitFound = "<roundId>:<targetId>", unless the hunt frame already holds that tag.
+//   The same player in two tabs can both write it, so right after a write, and whenever the
+//   frame holds the tag more than once, a driver keeps the copy with the smallest element id
+//   and removes the rest. No tab removes the smallest, so the board converges on it.
 // - A second player joins by clicking the action button: their driver finds the hunt frame
 //   in view or selection, validates meta.iit with parseFrameMeta, and sends hello.
 // - roomId = deriveRoomId(joinToken). The room refuses a hello whose ids disagree, so only

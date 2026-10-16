@@ -539,7 +539,8 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
 
     /**
      * Every find of ours in the current or last ended round gets a marker unless one with its tag is
-     * already in the frame. Run on each snapshot, so a failed write or a reload heals on the next one.
+     * already in the frame. Run on each snapshot, so a failed write, a reload, or a copy another tab
+     * of ours wrote heals on the next one.
      */
     async function markFinds(h: Hunt, snapshot: Snapshot) {
         const rounds = [snapshot.room.current, h.lastEnded].filter(
@@ -558,8 +559,11 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             return;
         }
         const { drawdyElements } = await send({ type: "command:scene:query-rect", req: { rect, properties: ["meta"] } });
-        const onBoard = new Set(drawdyElements.map((e) => e.meta?.iitFound));
-        for (const mark of due) if (!onBoard.has(mark.tag)) await writeMarker(h, rect, mark);
+        for (const mark of due) {
+            const copies = taggedIds(drawdyElements, mark.tag);
+            if (copies.length === 0) await writeMarker(h, rect, mark);
+            else await keepOne(mark.tag, copies);
+        }
     }
 
     async function writeMarker(h: Hunt, rect: Rect, { tag, target: planted, plantedIn }: Mark) {
@@ -569,6 +573,10 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             type: "command:scene:add-drawdy-elements",
             req: { elements: [foundMarker({ id, frameId: h.frameId, frameRect: rect, target, color: h.me.color, tag })] },
         });
+        const { drawdyElements } = await send({ type: "command:scene:query-rect", req: { rect, properties: ["meta"] } });
+        const copies = taggedIds(drawdyElements, tag);
+        await keepOne(tag, copies);
+        if (copies[0] !== id) return;
         await send({
             type: "command:scene:update-drawdy-elements",
             req: { updates: [{ drawdyElementId: id, properties: { localAnimation: FOUND_POP } }] },
@@ -585,6 +593,13 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
                 ),
             POP_SETTLE_MS
         );
+    }
+
+    /** Another tab of ours may have marked the same find. Every tab keeps the smallest id, so they never remove each other's keeper. */
+    async function keepOne(tag: string, copies: string[]) {
+        if (copies.length < 2) return;
+        await send({ type: "command:scene:remove-drawdy-elements", req: { drawdyElementIds: copies.slice(1) } });
+        log(`marker ${tag}: removed ${copies.length - 1} extra copies`);
     }
 
     async function toLaser(h: Hunt) {
@@ -727,6 +742,10 @@ function placedRuns(view: RoundView, tv: TargetView): Point[][] {
 /** A trail resends every visible stroke, so a stroke is known by its ends and its length. */
 function strokeKey(stroke: readonly (readonly [number, number])[]): string {
     return `${stroke[0]}|${stroke[stroke.length - 1]}|${stroke.length}`;
+}
+
+function taggedIds(elements: readonly SubscribedDrawdyElement[], tag: string): string[] {
+    return elements.flatMap((e) => (e.meta?.iitFound === tag ? [e.id] : [])).sort();
 }
 
 function isRunning(round: WireRound | null): boolean {
