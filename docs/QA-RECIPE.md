@@ -97,6 +97,7 @@ Right-click empty canvas. Hover **Extension**, then click **Add sticky note**. P
 - The `localhost:5183` link connected from the command palette.
 - The starter driver loaded, and both `dom` and `scene` were granted.
 - The starter note appeared on the board.
+- Reopening the exact board URL after the dev server stopped kept every element, including the stickies and arrows. That screenshot is in `.audit/board-reopened.png`, which is gitignored.
 - Pencil, rectangle, line, arrow, and sticky note all drew with pointer drags. Thai text typed with `insertText` rendered correctly.
 
 ## What failed and how it was handled
