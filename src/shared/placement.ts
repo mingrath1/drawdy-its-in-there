@@ -35,11 +35,16 @@ const GAP_FRAC = 0.2;
 /** When a pass cannot fit every target, retry with stamps scaled by the next factor. */
 const SHRINK_PASSES = [1, 0.75, 0.55];
 
-type Grid = {
+/** Cells tile the frame exactly, so a short frame gets short cells rather than one row hanging past its edge. */
+type Cells = {
     frame: Rect;
-    cell: number;
+    cellWidth: number;
+    cellHeight: number;
     cols: number;
     rows: number;
+};
+
+type Grid = Cells & {
     /** Blurred ink per cell, normalized so the busiest cell is 1. */
     clutter: Float64Array;
 };
@@ -107,15 +112,15 @@ function fitAt(
     grid: Grid,
     shape: { side: number; rotationDeg: number; jitterX: number; jitterY: number }
 ): Placement | null {
-    const { frame, cell, cols } = grid;
+    const { frame, cellWidth, cellHeight, cols } = grid;
     const theta = (shape.rotationDeg * Math.PI) / 180;
     const half = (shape.side / 2) * (Math.abs(Math.cos(theta)) + Math.abs(Math.sin(theta)));
     if (2 * half > frame.width || 2 * half > frame.height) return null;
 
     const col = cellIndex % cols;
     const row = Math.floor(cellIndex / cols);
-    const cx = clamp(frame.x + (col + 0.5 + shape.jitterX) * cell, frame.x + half, frame.x + frame.width - half);
-    const cy = clamp(frame.y + (row + 0.5 + shape.jitterY) * cell, frame.y + half, frame.y + frame.height - half);
+    const cx = clamp(frame.x + (col + 0.5 + shape.jitterX) * cellWidth, frame.x + half, frame.x + frame.width - half);
+    const cy = clamp(frame.y + (row + 0.5 + shape.jitterY) * cellHeight, frame.y + half, frame.y + frame.height - half);
     return {
         cx,
         cy,
@@ -143,14 +148,16 @@ function rankCells(grid: Grid, noiseWeight: number, rand: () => number): number[
 }
 
 function clutterGrid(frame: Rect, items: readonly BoardItem[]): Grid {
-    const cell = Math.max(frame.width, frame.height) / GRID_CELLS;
-    const cols = Math.max(1, Math.ceil(frame.width / cell));
-    const rows = Math.max(1, Math.ceil(frame.height / cell));
+    /** The longer side of every cell, and the ink of a stroke crossing a cell that way. */
+    const longSide = Math.max(frame.width, frame.height) / GRID_CELLS;
+    const cols = Math.max(1, Math.ceil(frame.width / longSide));
+    const rows = Math.max(1, Math.ceil(frame.height / longSide));
+    const cells: Cells = { frame, cellWidth: frame.width / cols, cellHeight: frame.height / rows, cols, rows };
     const ink = new Float64Array(cols * rows);
 
     const addInk = (x: number, y: number, amount: number) => {
-        const col = Math.floor((x - frame.x) / cell);
-        const row = Math.floor((y - frame.y) / cell);
+        const col = Math.floor((x - frame.x) / cells.cellWidth);
+        const row = Math.floor((y - frame.y) / cells.cellHeight);
         if (col < 0 || row < 0 || col >= cols || row >= rows) return;
         ink[row * cols + col] += amount;
     };
@@ -158,10 +165,10 @@ function clutterGrid(frame: Rect, items: readonly BoardItem[]): Grid {
     for (const item of items) {
         const paths = inkPaths(item);
         if (paths) {
-            for (const path of paths) tracePath(path, frame, cell, addInk);
+            for (const path of paths) tracePath(path, cells, longSide / 4, addInk);
         } else {
-            fillRect(item.rect, frame, cell, cols, rows, (i, area) => {
-                ink[i] += (FILL_INK_PER_CELL * area) / cell;
+            fillRect(item.rect, cells, (i, area) => {
+                ink[i] += (FILL_INK_PER_CELL * area) / longSide;
             });
         }
     }
@@ -183,7 +190,7 @@ function clutterGrid(frame: Rect, items: readonly BoardItem[]): Grid {
         }
     }
     if (max > 0) for (let i = 0; i < clutter.length; i++) clutter[i] /= max;
-    return { frame, cell, cols, rows, clutter };
+    return { ...cells, clutter };
 }
 
 /** The strokes an item draws, or null when it is a filled block (text, image). */
@@ -202,20 +209,26 @@ function inkPaths(item: BoardItem): Point[][] | null {
 }
 
 /**
- * Inks each segment's part inside the frame, two samples per cell along its longer axis. A clipped
- * segment spans at most GRID_CELLS cells, so a stroke reaching far off the frame costs no more.
+ * Inks each segment's part inside the frame, two samples per cell along the axis where it crosses more
+ * cells. A clipped segment crosses at most GRID_CELLS cells, so a stroke reaching far off the frame costs no more.
  */
-function tracePath(path: Point[], frame: Rect, cell: number, addInk: (x: number, y: number, amount: number) => void) {
+function tracePath(
+    path: Point[],
+    cells: Cells,
+    dotInk: number,
+    addInk: (x: number, y: number, amount: number) => void
+) {
     if (path.length === 1) {
-        addInk(path[0][0], path[0][1], cell / 4);
+        addInk(path[0][0], path[0][1], dotInk);
         return;
     }
     for (let i = 1; i < path.length; i++) {
-        const inside = clipToRect(path[i - 1], path[i], frame);
+        const inside = clipToRect(path[i - 1], path[i], cells.frame);
         if (!inside) continue;
         const [[ax, ay], [bx, by]] = inside;
         const length = Math.hypot(bx - ax, by - ay);
-        const steps = Math.max(1, Math.ceil((2 * Math.max(Math.abs(bx - ax), Math.abs(by - ay))) / cell));
+        const crossed = Math.max(Math.abs(bx - ax) / cells.cellWidth, Math.abs(by - ay) / cells.cellHeight);
+        const steps = Math.max(1, Math.ceil(2 * crossed));
         for (let s = 0; s < steps; s++) {
             const t = (s + 0.5) / steps;
             addInk(ax + (bx - ax) * t, ay + (by - ay) * t, length / steps);
@@ -251,24 +264,18 @@ function clipToRect(a: Point, b: Point, rect: Rect): [Point, Point] | null {
     ];
 }
 
-function fillRect(
-    rect: Rect,
-    frame: Rect,
-    cell: number,
-    cols: number,
-    rows: number,
-    add: (index: number, area: number) => void
-) {
-    const c0 = Math.max(0, Math.floor((rect.x - frame.x) / cell));
-    const c1 = Math.min(cols - 1, Math.floor((rect.x + rect.width - frame.x) / cell));
-    const r0 = Math.max(0, Math.floor((rect.y - frame.y) / cell));
-    const r1 = Math.min(rows - 1, Math.floor((rect.y + rect.height - frame.y) / cell));
+function fillRect(rect: Rect, cells: Cells, add: (index: number, area: number) => void) {
+    const { frame, cellWidth, cellHeight, cols, rows } = cells;
+    const c0 = Math.max(0, Math.floor((rect.x - frame.x) / cellWidth));
+    const c1 = Math.min(cols - 1, Math.floor((rect.x + rect.width - frame.x) / cellWidth));
+    const r0 = Math.max(0, Math.floor((rect.y - frame.y) / cellHeight));
+    const r1 = Math.min(rows - 1, Math.floor((rect.y + rect.height - frame.y) / cellHeight));
     for (let row = r0; row <= r1; row++) {
         for (let col = c0; col <= c1; col++) {
-            const cx = frame.x + col * cell;
-            const cy = frame.y + row * cell;
-            const w = Math.min(cx + cell, rect.x + rect.width) - Math.max(cx, rect.x);
-            const h = Math.min(cy + cell, rect.y + rect.height) - Math.max(cy, rect.y);
+            const cx = frame.x + col * cellWidth;
+            const cy = frame.y + row * cellHeight;
+            const w = Math.min(cx + cellWidth, rect.x + rect.width) - Math.max(cx, rect.x);
+            const h = Math.min(cy + cellHeight, rect.y + rect.height) - Math.max(cy, rect.y);
             if (w > 0 && h > 0) add(row * cols + col, w * h);
         }
     }
@@ -281,8 +288,8 @@ function localScaleLookup(grid: Grid, items: readonly BoardItem[], frameMin: num
     return (cellIndex: number): number => {
         const cached = cache.get(cellIndex);
         if (cached !== undefined) return cached;
-        const cx = grid.frame.x + ((cellIndex % grid.cols) + 0.5) * grid.cell;
-        const cy = grid.frame.y + (Math.floor(cellIndex / grid.cols) + 0.5) * grid.cell;
+        const cx = grid.frame.x + ((cellIndex % grid.cols) + 0.5) * grid.cellWidth;
+        const cy = grid.frame.y + (Math.floor(cellIndex / grid.cols) + 0.5) * grid.cellHeight;
         const sizes: number[] = [];
         for (const { rect } of items) {
             const near =

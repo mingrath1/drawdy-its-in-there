@@ -186,6 +186,25 @@ describe("plant", () => {
         }
     });
 
+    it("spreads targets across the height of a wide, short frame instead of pinning them to one edge", () => {
+        const frameRect: Rect = { x: 0, y: 0, width: 1000, height: 10 };
+        let top = 0;
+        let bottom = 0;
+        let total = 0;
+        for (const difficulty of [1, 2, 3, 4]) {
+            for (let seed = 0; seed < 40; seed++) {
+                for (const t of plant(request([], { seed, difficulty, board: { frameRect, items: [] } }))) {
+                    const b = tiltedBounds(t);
+                    total++;
+                    if (b.y <= frameRect.y + 1e-9) top++;
+                    if (b.y + b.height >= frameRect.y + frameRect.height - 1e-9) bottom++;
+                }
+            }
+        }
+        assert.ok(bottom / total < 0.4, `bottom edge share ${bottom / total}`);
+        assert.ok(Math.abs(bottom - top) / total < 0.15, `bottom ${bottom}, top ${top} of ${total}`);
+    });
+
     it("hides nothing without stamps or with a zero count", () => {
         assert.deepEqual(plant(request(boards.dense, { stampIds: [] })), []);
         assert.deepEqual(plant(request(boards.dense, { count: 0 })), []);
