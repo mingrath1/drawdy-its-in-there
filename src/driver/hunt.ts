@@ -566,7 +566,6 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         const view = h.round;
         const current = h.snapshot?.room.current;
         if (fresh.length === 0 || !view || view.ended || current?.status !== "live" || current.id !== view.id) return;
-        await quietly("following the hunt frame", followFrame(h, view));
 
         const taken = new Set(current.finds.map((f) => f.targetId));
         for (const claim of h.claims.values()) if (claim.roundId === view.id) taken.add(claim.targetId);
@@ -583,6 +582,8 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
                 }
             }
         }
+        // Only after judging, so a stroke counts against where the targets showed while it was drawn.
+        await quietly("following the hunt frame", followFrame(h, view));
     }
 
     async function onResult(h: Hunt, result: Result) {

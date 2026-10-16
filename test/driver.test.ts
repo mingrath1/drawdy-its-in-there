@@ -608,9 +608,9 @@ describe("driver", () => {
         });
 
         frame.x += 50;
-        laser(t, [circleTarget(0, 200, 80)]);
+        laser(t, [circleTarget(0, 150, 80)]);
         await t.flush();
-        assert.equal(room.answer("ok"), "t0", "a stroke around where the target is now finds it");
+        assert.equal(room.answer("ok"), "t0", "a stroke around where the target still shows finds it");
         room.snapshot(live("round-9", undefined, [findBy(0)]));
         await t.flush();
         const [marker] = markers(t.drawdy);
@@ -651,6 +651,25 @@ describe("driver", () => {
         await t.flush();
         const moved = drawnTargets(t.drawdy)[0];
         assert.ok(Math.abs(moved.cx - before[0].cx - 150) < 1e-6 && Math.abs(moved.cy - before[0].cy - 80) < 1e-6, "the next tick moves it");
+    });
+
+    it("judges a stroke where the target showed when it was drawn, even when the move it triggers goes through", async () => {
+        const t = setup();
+        const room = await joinRemote(t, live());
+        const [t0] = drawnTargets(t.drawdy);
+        const t0Line = t0.batch[0].drawdyElementId;
+        t.failOnce((r) => r.type === "command:scene:update-drawdy-preview-elements" && r.req.elements[0].drawdyElementId === t0Line);
+        const frame = t.drawdy.elements.get("hunt-1")!;
+        frame.x += 150;
+        frame.y += 80;
+        mock.timers.tick(1_000);
+        await t.flush();
+        assert.ok(drawnLike(t.drawdy, t0), "t0 failed to move");
+
+        laser(t, [circleTarget(0)]);
+        await t.flush();
+        assert.deepEqual(room.sent("find.claim").map((c) => c.targetId), ["t0"], "a circle around t0 where it showed finds it");
+        assert.ok(drawnLike(t.drawdy, t0, 150, 80), "and the retry the stroke set off moved it");
     });
 
     it("never claims a target whose preview failed, and draws it on the next snapshot", async () => {
