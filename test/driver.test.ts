@@ -445,4 +445,58 @@ describe("driver", () => {
         mock.timers.tick(60_000);
         assert.equal(sockets.length, 1, "nothing redials");
     });
+
+    it("never judges a stroke from an earlier round again", async () => {
+        const t = setup();
+        const room = await joinRemote(t, live("round-1", [remoteTarget(0)]));
+        laser(t, [circleTarget(0)]);
+        await t.flush();
+        assert.equal(room.answer("ok"), "t0");
+        room.snapshot(ended(live("round-1", [remoteTarget(0)]), "all-found", [findBy(0)]));
+        room.snapshot(live("round-2", [remoteTarget(0)]));
+        await t.flush();
+        laser(t, [circleTarget(0), MISS]);
+        await t.flush();
+        assert.equal(room.sent("find.claim").length, 1, "the stroke still fading from round 1 claims nothing in round 2");
+    });
+
+    it("never judges a stroke drawn while the round was still hiding", async () => {
+        const t = setup();
+        const room = await joinRemote(t, { status: "planting", id: "round-1", frameRect: HUNT_FRAME });
+        laser(t, [circleTarget(1)]);
+        await t.flush();
+        room.snapshot(live("round-1"));
+        await t.flush();
+        laser(t, [circleTarget(1), MISS]);
+        await t.flush();
+        assert.equal(room.sent("find.claim").length, 0);
+        laser(t, [circleTarget(1), MISS, circleTarget(2)]);
+        await t.flush();
+        assert.deepEqual(room.sent("find.claim").map((c) => c.targetId), ["t2"]);
+    });
+
+    it("judges a new stroke when an older one faded out of the same event", async () => {
+        const t = setup();
+        const room = await joinRemote(t, live());
+        laser(t, [MISS, circleTarget(0)]);
+        await t.flush();
+        laser(t, [circleTarget(0), circleTarget(1)]);
+        await t.flush();
+        assert.deepEqual(room.sent("find.claim").map((c) => c.targetId), ["t0", "t1"]);
+        laser(t, []);
+        laser(t, [circleTarget(2)]);
+        await t.flush();
+        assert.deepEqual(room.sent("find.claim").map((c) => c.targetId), ["t0", "t1", "t2"], "after the trail fades every stroke is new");
+    });
+
+    it("never judges a stroke that was already fading when Hunt was clicked", async () => {
+        const t = setup();
+        const room = await joinRemote(t, live());
+        laser(t, [circleTarget(0), MISS]);
+        await t.flush();
+        assert.equal(room.sent("find.claim").length, 0, "only the stroke that fired the event is new");
+        laser(t, [circleTarget(0), MISS, circleTarget(1)]);
+        await t.flush();
+        assert.deepEqual(room.sent("find.claim").map((c) => c.targetId), ["t1"]);
+    });
 });

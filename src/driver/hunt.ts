@@ -52,8 +52,6 @@ type RoundView = {
     id: string;
     targets: Map<string, TargetView>;
     painted: Set<string>;
-    /** How many of the laser trail's strokes are already judged. The trail only grows until it fades. */
-    judged: number;
     ended: boolean;
     reveal: ReturnType<typeof setInterval> | null;
 };
@@ -72,6 +70,11 @@ type Hunt = {
     offerBoard: BoardSnapshot | null;
     startOnOpen: boolean;
     round: RoundView | null;
+    /**
+     * Fingerprints of the laser strokes already seen, judged or not, across rounds. Null until the
+     * first laser event, whose earlier strokes were drawn before the hunt subscribed.
+     */
+    strokes: Set<string> | null;
     claims: Map<string, { roundId: string; target: Target }>;
     banner: { x: number; y: number } | null;
     subscriptions: string[];
@@ -145,6 +148,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             offerBoard: null,
             startOnOpen: true,
             round: null,
+            strokes: null,
             claims: new Map(),
             banner,
             subscriptions: [],
@@ -375,7 +379,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
     async function drawRound(h: Hunt, round: Extract<Round, { status: "live" }>): Promise<RoundView> {
         h.frameRect = (await frameRect(h)) ?? h.frameRect;
         const offset = { dx: h.frameRect.x - round.frameRect.x, dy: h.frameRect.y - round.frameRect.y };
-        const view: RoundView = { id: round.id, targets: new Map(), painted: new Set(), judged: 0, ended: false, reveal: null };
+        const view: RoundView = { id: round.id, targets: new Map(), painted: new Set(), ended: false, reveal: null };
         for (const planted of round.targets) {
             const target = shifted(planted, offset);
             const runs = stampRuns(stamps.get(target.stampId) ?? STAMP_PACK[0], target);
@@ -447,12 +451,21 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
     }
 
     async function judgeStrokes(h: Hunt, lasers: readonly (readonly [number, number])[][]) {
+        if (lasers.length === 0) {
+            h.strokes = new Set();
+            return;
+        }
+        const seen = h.strokes ?? new Set(lasers.slice(0, -1).map(strokeKey));
+        h.strokes = seen;
+        const fresh = lasers.filter((stroke) => {
+            const key = strokeKey(stroke);
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
         const view = h.round;
         const current = h.snapshot?.room.current;
-        if (!view || view.ended || current?.status !== "live" || current.id !== view.id) return;
-        if (lasers.length < view.judged) view.judged = 0;
-        const fresh = lasers.slice(view.judged);
-        view.judged = lasers.length;
+        if (fresh.length === 0 || !view || view.ended || current?.status !== "live" || current.id !== view.id) return;
 
         const taken = new Set(current.finds.map((f) => f.targetId));
         for (const claim of h.claims.values()) if (claim.roundId === view.id) taken.add(claim.target.id);
@@ -616,6 +629,11 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         },
         settled: () => queue,
     };
+}
+
+/** A trail resends every visible stroke, so a stroke is known by its ends and its length. */
+function strokeKey(stroke: readonly (readonly [number, number])[]): string {
+    return `${stroke[0]}|${stroke[stroke.length - 1]}|${stroke.length}`;
 }
 
 function isRunning(round: WireRound | null): boolean {
