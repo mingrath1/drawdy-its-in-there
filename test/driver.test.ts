@@ -625,4 +625,19 @@ describe("driver", () => {
         await t.flush();
         assert.deepEqual(markers(t.drawdy).map((m) => m.meta.iitFound), ["round-1:t0"]);
     });
+
+    it("reveals and shows the ended banner when restoring the tool fails, and restores it at the next chance", async () => {
+        const t = setup();
+        const room = await joinRemote(t, live());
+        assert.equal(t.drawdy.tool, "laser-pointer");
+        t.failOnce((r) => r.type === "command:tools:set-active" && r.req.toolId === "pencil");
+        room.snapshot(ended(live(), "time-up"));
+        await t.flush();
+        assert.ok(bannerTexts(t.drawdy).includes("หมดเวลา! · Time's up!"), "the ended banner renders");
+        assert.ok(drawnTargets(t.drawdy).every((d) => d.batch.every((e: any) => e.strokeColor === "#ef4444")), "missed targets turn red");
+        assert.equal(t.drawdy.tool, "laser-pointer");
+        t.drawdy.click(t.onEvent, STOP_BUTTON_ID);
+        await t.flush();
+        assert.equal(t.drawdy.tool, "pencil", "Stop restores the tool");
+    });
 });

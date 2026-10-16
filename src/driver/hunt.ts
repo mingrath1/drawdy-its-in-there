@@ -472,7 +472,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
     async function finishRound(h: Hunt, view: RoundView, round: Extract<Round, { status: "ended" }>) {
         view.ended = true;
         stopTicker(h);
-        await restoreTool(h);
+        await quietly("restoring the tool", restoreTool(h));
         log(`round ${round.id} ended (${round.reason}): ${round.finds.length}/${round.targets.length} found`);
         const missed = [...view.targets.values()].filter((tv) => !view.painted.has(tv.planted.id));
         if (missed.length === 0) return;
@@ -596,7 +596,6 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
     }
 
     async function toLaser(h: Hunt) {
-        if (h.toolToRestore !== null) return;
         const { toolId } = await send({ type: "command:tools:get-active" });
         if (toolId === LASER) return;
         await send({ type: "command:tools:set-active", req: { toolId: LASER } });
@@ -604,12 +603,13 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         log(`switched to the laser; will restore ${h.toolToRestore}`);
     }
 
+    /** Forgets the tool only once it is back, or once the player has moved off the laser on their own. */
     async function restoreTool(h: Hunt) {
         const previous = h.toolToRestore;
         if (previous === null) return;
-        h.toolToRestore = null;
         const { toolId } = await send({ type: "command:tools:get-active" });
         if (toolId === LASER) await send({ type: "command:tools:set-active", req: { toolId: previous } });
+        h.toolToRestore = null;
     }
 
     function startTicker(h: Hunt) {
