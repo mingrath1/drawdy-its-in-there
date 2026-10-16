@@ -3,6 +3,7 @@ import { expect } from "vitest";
 import type { BoardSnapshot, Round } from "../../src/shared/hunt.ts";
 import {
   type Command,
+  deriveRoomId,
   type Fault,
   type FaultCode,
   parseServer,
@@ -38,7 +39,10 @@ const hex = (bytes: number): string =>
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
 
-export const roomKeys = (): RoomKeys => ({ roomId: crypto.randomUUID(), joinToken: hex(32) });
+export const roomKeys = (): RoomKeys => {
+  const joinToken = hex(32);
+  return { roomId: deriveRoomId(joinToken), joinToken };
+};
 
 export type Client = {
   send: (message: unknown) => void;

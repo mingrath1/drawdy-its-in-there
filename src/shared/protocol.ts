@@ -16,8 +16,11 @@
 //   meta.iitFound = "<roundId>:<targetId>", after checking no element already has that tag.
 // - A second player joins by clicking the action button: their driver finds the hunt frame
 //   in view or selection, validates meta.iit with parseFrameMeta, and sends hello.
+// - roomId = deriveRoomId(joinToken). The room refuses a hello whose ids disagree, so only
+//   a token holder can create or enter a room.
 
 import type { BoardSnapshot, LeagueEntry, Rect, Room, Round } from "./hunt.ts";
+import { sha256Hex } from "./sha256.ts";
 
 export const PROTOCOL_VERSION = 1 as const;
 export const MAX_FRAME_CHARS = 262_144;
@@ -125,6 +128,8 @@ export function toWire(room: Room): WireRoom {
 }
 
 export const foundTag = (roundId: string, targetId: string): string => `${roundId}:${targetId}`;
+
+export const deriveRoomId = (joinToken: string): string => sha256Hex(`iit-room-v1:${joinToken}`);
 
 // ---------- validation, dependency-free ----------
 

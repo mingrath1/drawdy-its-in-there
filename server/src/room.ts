@@ -7,6 +7,7 @@ import {
   type ClientMessage,
   type Command,
   commandFingerprint,
+  deriveRoomId,
   encode,
   type FaultCode,
   type Hello,
@@ -86,11 +87,6 @@ const reciprocateClose = (socket: WebSocket, code: number, reason: string): void
 const connectionState = (socket: WebSocket): ConnectionState => socket.deserializeAttachment();
 
 const randomSeed = (): number => crypto.getRandomValues(new Uint32Array(1))[0]!;
-
-const sha256Hex = async (value: string): Promise<string> => {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-};
 
 const snapshot = (open: OpenRoom, self: string, taunt: string | null): Snapshot => ({
   v: PROTOCOL_VERSION,
@@ -195,31 +191,27 @@ export class Room extends DurableObject<Env> {
     reportError("Room WebSocket failed", error);
   }
 
-  /** The first valid hello to an empty room creates it and keeps the token's hash. Later hellos must match it. */
+  /** The first hello to an empty room creates it. Its id commits to the token, so only a token holder gets this far. */
   async #hello(socket: WebSocket, hello: Hello): Promise<void> {
     const state = connectionState(socket);
     if (state.player !== undefined) return this.#fault(socket, "invalid", 1002);
-    if (hello.roomId !== state.roomId) return this.#fault(socket, "auth", 1008);
+    if (hello.roomId !== state.roomId || hello.roomId !== deriveRoomId(hello.joinToken)) {
+      return this.#fault(socket, "auth", 1008);
+    }
     if (this.#players().length >= MAX_PLAYERS_ONLINE) {
       return this.#fault(socket, "full", 1008, RECOVERY_ALARM_DELAY_MS);
     }
-    const tokenHash = await sha256Hex(hello.joinToken);
     const now = Date.now();
     // Plant tasks belong to a conversation, so the root one must exist.
     await this.#harness.root(context);
     const open = await this.#harness.commit(async (tx) => {
       const doc = await tx.doc(HuntDoc);
-      if (doc.open === null) {
-        doc.open = { tokenHash, revision: 0, taunt: null, room: openRoom(hello.roomId) };
-      } else if (doc.open.tokenHash !== tokenHash) {
-        return null;
-      }
+      doc.open ??= { revision: 0, taunt: null, room: openRoom(hello.roomId) };
       const before = plain<RoomState>(doc.open.room);
       const after = joinRoom(expireRound(before, now), hello.player);
       publish(doc.open, before, after, this.#tauntFor(before, after));
       return plain<OpenRoom>(doc.open);
     }, context);
-    if (open === null) return this.#fault(socket, "auth", 1008);
 
     socket.serializeAttachment({ ...state, player: hello.player } satisfies ConnectionState);
     this.#send(socket, snapshot(open, hello.player.playerId, null));

@@ -14,7 +14,7 @@ import type { CommandType, ResultCode } from "../../src/shared/protocol.ts";
 import { plantFinished } from "../../src/shared/rules.ts";
 
 /** `revision` orders snapshots; `taunt` is the line for the change that produced this revision. */
-export type OpenRoom = { tokenHash: string; revision: number; taunt: string | null; room: Room };
+export type OpenRoom = { revision: number; taunt: string | null; room: Room };
 
 /** `open` is null until the first hello creates the room. */
 export const HuntDoc = defineDoc<{ open: OpenRoom | null }>({

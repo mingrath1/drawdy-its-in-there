@@ -5,7 +5,7 @@
 import type { DriverSubscriptionEvent, ModuleStyling, SubscribedDrawdyElement } from "@drawdy/driver-protocol";
 import type { BoardSnapshot, Find, Rect, Round, Target } from "../shared/hunt.ts";
 import { judge } from "../shared/judge.ts";
-import { PROTOCOL_VERSION, foundTag, parseFrameMeta } from "../shared/protocol.ts";
+import { PROTOCOL_VERSION, deriveRoomId, foundTag, parseFrameMeta } from "../shared/protocol.ts";
 import type { FrameMeta, HuntHost, Player, Result, ServerMessage, Snapshot, WireRound } from "../shared/protocol.ts";
 import { STAMP_PACK } from "../stamp-pack.ts";
 import type { PackStamp } from "../stamp-pack.ts";
@@ -210,7 +210,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
 
     async function createFrame(rect: Rect): Promise<{ frameId: string; rect: Rect; meta: FrameMeta }> {
         const joinToken = toHex(crypto.getRandomValues(new Uint8Array(32)));
-        const meta: FrameMeta = { v: 1, roomId: await roomIdFor(joinToken), joinToken, backendUrl: BACKEND_URL };
+        const meta: FrameMeta = { v: 1, roomId: deriveRoomId(joinToken), joinToken, backendUrl: BACKEND_URL };
         if (!parseFrameMeta({ iit: meta })) throw new Error("built a hunt frame meta that does not validate");
         const frameId = ctx.generateId();
         await send({
@@ -634,15 +634,4 @@ function clean(value: unknown, max: number): string {
 
 function toHex(bytes: Uint8Array): string {
     return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-/** roomId = hex(SHA-256("iit-room-v1:" + joinToken)), so a room can check a hello's token against its id. */
-async function roomIdFor(joinToken: string): Promise<string> {
-    try {
-        const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`iit-room-v1:${joinToken}`));
-        return toHex(new Uint8Array(digest));
-    } catch (error) {
-        warn("SHA-256 unavailable; using a random room id:", error instanceof Error ? error.message : error);
-        return toHex(crypto.getRandomValues(new Uint8Array(32)));
-    }
 }

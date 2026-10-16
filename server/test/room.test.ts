@@ -68,6 +68,18 @@ describe("room access", () => {
     expect((await client.closed).code).toBe(1008);
   });
 
+  it("refuses a hello whose room id is not derived from its token, and creates nothing", async () => {
+    const keys = roomKeys();
+    const squatter = await connect(keys.roomId);
+    squatter.send({ v: 1, type: "hello", roomId: keys.roomId, joinToken: roomKeys().joinToken, player: bob });
+    await squatter.waitFor(faultCoded("auth"));
+    expect((await squatter.closed).code).toBe(1008);
+
+    const { client, first } = await joined(keys, alice);
+    expect(first.room.league.map(({ playerId }) => playerId)).toEqual(["alice"]);
+    client.close();
+  });
+
   it("refuses commands before hello", async () => {
     const client = await connect(roomKeys().roomId);
     client.send({ v: 1, type: "find.claim", requestId: "r1", roundId: "x", targetId: "y" });
@@ -85,7 +97,7 @@ describe("room access", () => {
     expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
   });
 
-  it("stores a hash of the join token and never the token", async () => {
+  it("never stores the join token", async () => {
     const keys = roomKeys();
     const { client } = await joined(keys, alice);
     const rows = await runInDurableObject(env.ROOMS.getByName(keys.roomId), (_instance, state) =>
@@ -95,10 +107,7 @@ describe("room access", () => {
         .flatMap(({ name }) => state.storage.sql.exec(`SELECT * FROM "${String(name)}"`).toArray()),
     );
     const stored = JSON.stringify(rows);
-    const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(keys.joinToken)))]
-      .map((byte) => byte.toString(16).padStart(2, "0"))
-      .join("");
-    expect(stored).toContain(hash);
+    expect(stored).toContain(keys.roomId);
     expect(stored).not.toContain(keys.joinToken);
     client.close();
   });
