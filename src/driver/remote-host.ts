@@ -56,7 +56,8 @@ export function createRemoteHost(options: RemoteHostOptions): HuntHost {
     let synced = false;
     let stopped = false;
     let attempts = 0;
-    let retryFloorMs = 0;
+    /** The wait the room named in a fault on this connection, or null while it named none. */
+    let retryFloorMs: number | null = null;
     let redial: Timer | null = null;
     let handshake: Timer | null = null;
     let watchdog: Timer | null = null;
@@ -64,7 +65,7 @@ export function createRemoteHost(options: RemoteHostOptions): HuntHost {
 
     const timeOut = () => stop(new RoomFault("timeout"));
 
-    /** Open gives up on a room that stays silent, not on one that asked for a wait. */
+    /** Open gives up on a room that stays silent, not on one that asked for a wait. That one gets the whole redial and one more connection. */
     const postponeOpenDeadline = (ms: number) => {
         if (!pendingOpen) return;
         clearTimeout(pendingOpen.timer);
@@ -105,9 +106,10 @@ export function createRemoteHost(options: RemoteHostOptions): HuntHost {
         ws.close();
         if (stopped || redial) return;
         const ceiling = Math.min(BACKOFF_CAP_MS, BACKOFF_BASE_MS * 2 ** attempts);
-        const delay = Math.max(retryFloorMs, ceiling / 2 + (random() * ceiling) / 2);
+        const delay = Math.max(retryFloorMs ?? 0, ceiling / 2 + (random() * ceiling) / 2);
+        if (retryFloorMs !== null) postponeOpenDeadline(delay + OPEN_TIMEOUT_MS);
         attempts++;
-        retryFloorMs = 0;
+        retryFloorMs = null;
         log(`${why}; retrying in ${Math.round(delay)} ms`);
         redial = setTimeout(() => {
             redial = null;
@@ -166,10 +168,7 @@ export function createRemoteHost(options: RemoteHostOptions): HuntHost {
             armWatchdog(true);
         } else if (message.type === "fault") {
             if (message.code === "auth" || message.code === "version" || message.code === "full") refuse(message.code);
-            else {
-                retryFloorMs = message.retryAfterMs;
-                postponeOpenDeadline(message.retryAfterMs + OPEN_TIMEOUT_MS);
-            }
+            else retryFloorMs = message.retryAfterMs;
         }
         receive?.(message);
     };

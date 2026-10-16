@@ -270,6 +270,25 @@ describe("remote host", () => {
         assert.equal(refused, "timeout");
     });
 
+    it("keeps open waiting while backoff outgrows the wait a busy room names", async () => {
+        const t = setup();
+        let refused: string | null = null;
+        t.opened.catch((e: RoomFault) => (refused = e.code));
+        for (let i = 0; i < 7; i++) {
+            const before = t.sockets.length;
+            t.last().accept();
+            t.last().deliver({ v: 1, type: "fault", code: "unavailable", retryAfterMs: 5_000 });
+            t.last().drop();
+            for (let waited = 0; t.sockets.length === before && waited < BACKOFF_CAP_MS; waited += 250) mock.timers.tick(250);
+        }
+        await settle();
+        assert.equal(refused, null, "open still waits");
+        assert.equal(t.sockets.length, 8, "and the redial after the seventh refusal goes out");
+        t.last().accept();
+        t.last().deliver(snapshot(1));
+        await t.opened;
+    });
+
     it("stops for good when the room speaks another protocol version", async () => {
         const t = setup();
         let error: RoomFault | undefined;
