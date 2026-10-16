@@ -125,6 +125,12 @@ describe("room access", () => {
     expect((await client.closed).code).toBe(1008);
   });
 
+  it("answers a close without a status code with a normal close", async () => {
+    const { client } = await joined(roomKeys(), alice);
+    client.closeWithoutCode();
+    expect((await client.closed).code).toBe(1000);
+  });
+
   it("answers a CORS preflight from the driver's null origin", async () => {
     const response = await exports.default.fetch(`https://example.com/rooms/${roomKeys().roomId}`, {
       method: "OPTIONS",

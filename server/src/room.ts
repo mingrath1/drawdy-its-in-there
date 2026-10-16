@@ -76,10 +76,11 @@ const reportError = (
 const isReservedCloseCode = (code: number): boolean =>
   code === 1005 || code === 1006 || code === 1015;
 
+/** A reserved code cannot be sent back, so a close without a status gets a normal one. */
 const reciprocateClose = (socket: WebSocket, code: number, reason: string): void => {
-  if (isReservedCloseCode(code)) return;
   try {
-    socket.close(code, reason);
+    if (isReservedCloseCode(code)) socket.close(1000);
+    else socket.close(code, reason);
   } catch {
     // The socket is already closed or the peer is no longer reachable.
   }

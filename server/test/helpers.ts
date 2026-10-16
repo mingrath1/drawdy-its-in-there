@@ -57,6 +57,8 @@ export type Client = {
   ) => Promise<T>;
   closed: Promise<{ code: number; reason: string }>;
   close: () => void;
+  /** Closes with no status code, which the room sees as 1005. */
+  closeWithoutCode: () => void;
 };
 
 export async function connect(roomId: string): Promise<Client> {
@@ -105,6 +107,7 @@ export async function connect(roomId: string): Promise<Client> {
       expect(invalid).toEqual([]);
       socket.close(1000, "test done");
     },
+    closeWithoutCode: () => socket.close(),
   };
 }
 
