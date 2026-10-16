@@ -46,19 +46,27 @@ export type HuntDriver = {
     settled(): Promise<void>;
 };
 
-type TargetView = { target: Target; runs: Point[][]; ids: string[]; previewId: string | null };
+type Offset = { dx: number; dy: number };
+
+/** `runs` are the stamp's strokes where it was planted. Every drawing shifts them by the round's offset. */
+type TargetView = { planted: Target; runs: Point[][]; ids: string[]; previewId: string | null; color: string; strokeWidth: number };
 
 type RoundView = {
     id: string;
+    /** The hunt frame's rect when the round was planted, and how far the frame has moved since. */
+    frameRect: Rect;
+    offset: Offset;
     targets: Map<string, TargetView>;
     painted: Set<string>;
     ended: boolean;
     reveal: ReturnType<typeof setInterval> | null;
 };
 
+/** A find.claim in flight, with what its marker needs if the room confirms it. */
+type Claim = { roundId: string; target: Target; plantedIn: Rect };
+
 type Hunt = {
     frameId: string;
-    frameRect: Rect;
     meta: FrameMeta;
     me: Player;
     host: HuntHost;
@@ -75,7 +83,7 @@ type Hunt = {
      * first laser event, whose earlier strokes were drawn before the hunt subscribed.
      */
     strokes: Set<string> | null;
-    claims: Map<string, { roundId: string; target: Target }>;
+    claims: Map<string, Claim>;
     banner: { x: number; y: number } | null;
     subscriptions: string[];
     toolToRestore: string | null;
@@ -138,7 +146,6 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
 
         const h: Hunt = {
             frameId: frame.frameId,
-            frameRect: frame.rect,
             meta: frame.meta,
             me,
             host: hostFor(frame.meta, difficulty),
@@ -349,7 +356,6 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             await leave(h);
             return;
         }
-        h.frameRect = rect;
         const { drawdyElements } = await send({ type: "command:scene:query-rect", req: { rect, properties: BOARD_PROPERTIES } });
         const board = boardSnapshot(rect, drawdyElements);
         const points = board.items.reduce((n, i) => n + (i.points?.length ?? 0), 0);
@@ -377,40 +383,59 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
     }
 
     async function drawRound(h: Hunt, round: Extract<Round, { status: "live" }>): Promise<RoundView> {
-        h.frameRect = (await frameRect(h)) ?? h.frameRect;
-        const offset = { dx: h.frameRect.x - round.frameRect.x, dy: h.frameRect.y - round.frameRect.y };
-        const view: RoundView = { id: round.id, targets: new Map(), painted: new Set(), ended: false, reveal: null };
+        const rect = await frameRect(h);
+        const view: RoundView = {
+            id: round.id,
+            frameRect: round.frameRect,
+            offset: rect ? offsetBetween(rect, round.frameRect) : { dx: 0, dy: 0 },
+            targets: new Map(),
+            painted: new Set(),
+            ended: false,
+            reveal: null,
+        };
         for (const planted of round.targets) {
             const stamp = stamps.get(planted.stampId);
             if (!stamp) {
                 warn(`skipped target ${planted.id}: this driver has no stamp ${planted.stampId}`);
                 continue;
             }
-            const target = shifted(planted, offset);
-            const runs = stampRuns(stamp, target);
+            const runs = stampRuns(stamp, planted);
             const ids = runs.map(() => ctx.generateId());
-            const tv: TargetView = { target, runs, ids, previewId: null };
-            view.targets.set(target.id, tv);
+            const tv: TargetView = { planted, runs, ids, previewId: null, color: planted.strokeColor, strokeWidth: planted.strokeWidth };
+            view.targets.set(planted.id, tv);
             try {
                 const { previewId } = await send({
                     type: "command:scene:create-drawdy-preview-elements",
-                    req: { elements: previewLines(ids, runs, target.strokeColor, target.strokeWidth) },
+                    req: { elements: previewLines(ids, placedRuns(view, tv), tv.color, tv.strokeWidth) },
                 });
                 tv.previewId = previewId;
             } catch (error) {
-                warn(`could not draw target ${target.id}:`, error instanceof Error ? error.message : error);
+                warn(`could not draw target ${planted.id}:`, error instanceof Error ? error.message : error);
             }
         }
-        log(`round ${round.id} is live: drew ${view.targets.size} targets, frame offset (${offset.dx}, ${offset.dy})`);
+        log(`round ${round.id} is live: drew ${view.targets.size} targets, frame offset (${view.offset.dx}, ${view.offset.dy})`);
         return view;
     }
 
-    async function paint(tv: TargetView, color: string, strokeWidth = tv.target.strokeWidth) {
+    async function paint(view: RoundView, tv: TargetView, color: string, strokeWidth = tv.planted.strokeWidth) {
+        tv.color = color;
+        tv.strokeWidth = strokeWidth;
         if (!tv.previewId) return;
         await send({
             type: "command:scene:update-drawdy-preview-elements",
-            req: { elements: previewLines(tv.ids, tv.runs, color, strokeWidth) },
+            req: { elements: previewLines(tv.ids, placedRuns(view, tv), color, strokeWidth) },
         });
+    }
+
+    /** Moves the targets with the hunt frame, so drawing, judging, and markers agree on where they are. */
+    async function followFrame(h: Hunt, view: RoundView) {
+        const rect = await frameRect(h);
+        if (!rect) return;
+        const offset = offsetBetween(rect, view.frameRect);
+        if (offset.dx === view.offset.dx && offset.dy === view.offset.dy) return;
+        view.offset = offset;
+        log(`the hunt frame moved; targets follow at offset (${offset.dx}, ${offset.dy})`);
+        for (const tv of view.targets.values()) await quietly("moving a target", paint(view, tv, tv.color, tv.strokeWidth));
     }
 
     async function paintFinds(view: RoundView, finds: Find[]) {
@@ -418,7 +443,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             if (view.painted.has(find.targetId)) continue;
             view.painted.add(find.targetId);
             const tv = view.targets.get(find.targetId);
-            if (tv) await quietly("recolouring a find", paint(tv, find.playerColor, tv.target.strokeWidth * 1.5));
+            if (tv) await quietly("recolouring a find", paint(view, tv, find.playerColor, tv.planted.strokeWidth * 1.5));
             log(`found ${find.targetId} by ${find.playerName}`);
         }
     }
@@ -428,18 +453,18 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         stopTicker(h);
         await restoreTool(h);
         log(`round ${round.id} ended (${round.reason}): ${round.finds.length}/${round.targets.length} found`);
-        const missed = [...view.targets.values()].filter((tv) => !view.painted.has(tv.target.id));
+        const missed = [...view.targets.values()].filter((tv) => !view.painted.has(tv.planted.id));
         if (missed.length === 0) return;
-        for (const tv of missed) await quietly("revealing a target", paint(tv, MISSED_COLOR));
+        for (const tv of missed) await quietly("revealing a target", paint(view, tv, MISSED_COLOR));
         let blinks = 0;
         view.reveal = setInterval(() => {
             blinks++;
             const done = blinks * REVEAL_BLINK_MS >= REVEAL_MS;
             if (done && view.reveal) clearInterval(view.reveal);
-            const color = (tv: TargetView) => (done || blinks % 2 === 0 ? MISSED_COLOR : tv.target.strokeColor);
+            const color = (tv: TargetView) => (done || blinks % 2 === 0 ? MISSED_COLOR : tv.planted.strokeColor);
             enqueue("reveal", async () => {
                 if (h.round !== view) return;
-                for (const tv of missed) await paint(tv, color(tv));
+                for (const tv of missed) await paint(view, tv, color(tv));
             });
         }, REVEAL_BLINK_MS);
     }
@@ -471,17 +496,20 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         const view = h.round;
         const current = h.snapshot?.room.current;
         if (fresh.length === 0 || !view || view.ended || current?.status !== "live" || current.id !== view.id) return;
+        await followFrame(h, view);
 
         const taken = new Set(current.finds.map((f) => f.targetId));
         for (const claim of h.claims.values()) if (claim.roundId === view.id) taken.add(claim.target.id);
         for (const stroke of fresh) {
-            const hits = [...view.targets.values()].filter((tv) => !taken.has(tv.target.id) && judge({ points: stroke }, tv.target));
-            log(`laser stroke of ${stroke.length} points: ${hits.length > 0 ? `hit ${hits.map((tv) => tv.target.id).join(", ")}` : "miss"}`);
+            const hits = [...view.targets.values()].filter(
+                (tv) => !taken.has(tv.planted.id) && judge({ points: stroke }, shifted(tv.planted, view.offset))
+            );
+            log(`laser stroke of ${stroke.length} points: ${hits.length > 0 ? `hit ${hits.map((tv) => tv.planted.id).join(", ")}` : "miss"}`);
             for (const tv of hits) {
-                taken.add(tv.target.id);
+                taken.add(tv.planted.id);
                 const requestId = nextRequestId();
-                h.claims.set(requestId, { roundId: view.id, target: tv.target });
-                h.host.send({ v: PROTOCOL_VERSION, type: "find.claim", requestId, roundId: view.id, targetId: tv.target.id });
+                h.claims.set(requestId, { roundId: view.id, target: tv.planted, plantedIn: view.frameRect });
+                h.host.send({ v: PROTOCOL_VERSION, type: "find.claim", requestId, roundId: view.id, targetId: tv.planted.id });
             }
         }
     }
@@ -494,13 +522,18 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         }
         h.claims.delete(result.requestId);
         log(`claim on ${claim.target.id} answered ${result.code}`);
-        if (result.code === "ok") await writeMarker(h, claim.roundId, claim.target);
+        if (result.code === "ok") await writeMarker(h, claim);
     }
 
     /** Only the winning claimant writes the marker, and only if no element carries its tag yet. */
-    async function writeMarker(h: Hunt, roundId: string, target: Target) {
-        const tag = foundTag(roundId, target.id);
-        const rect = (await frameRect(h)) ?? h.frameRect;
+    async function writeMarker(h: Hunt, claim: Claim) {
+        const tag = foundTag(claim.roundId, claim.target.id);
+        const rect = await frameRect(h);
+        if (!rect) {
+            warn(`marker ${tag} skipped: the hunt frame is gone`);
+            return;
+        }
+        const target = shifted(claim.target, offsetBetween(rect, claim.plantedIn));
         const { drawdyElements } = await send({ type: "command:scene:query-rect", req: { rect, properties: ["meta"] } });
         if (drawdyElements.some((e) => e.meta?.iitFound === tag)) {
             log(`marker ${tag} is already on the board`);
@@ -548,7 +581,14 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
 
     function startTicker(h: Hunt) {
         stopTicker(h);
-        h.ticker = setInterval(() => enqueue("countdown", () => renderBanner(h)), 1_000);
+        h.ticker = setInterval(
+            () =>
+                enqueue("countdown", async () => {
+                    if (h.round && !h.round.ended) await followFrame(h, h.round);
+                    await renderBanner(h);
+                }),
+            1_000
+        );
     }
 
     function stopTicker(h: Hunt) {
@@ -634,6 +674,14 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         },
         settled: () => queue,
     };
+}
+
+function offsetBetween(now: Rect, then: Rect): Offset {
+    return { dx: now.x - then.x, dy: now.y - then.y };
+}
+
+function placedRuns(view: RoundView, tv: TargetView): Point[][] {
+    return tv.runs.map((run) => run.map(([x, y]): Point => [x + view.offset.dx, y + view.offset.dy]));
 }
 
 /** A trail resends every visible stroke, so a stroke is known by its ends and its length. */

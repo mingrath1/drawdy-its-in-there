@@ -509,4 +509,36 @@ describe("driver", () => {
         await t.flush();
         assert.equal(room.sent("find.claim").length, 0);
     });
+
+    it("moves targets, judging, and markers with the hunt frame during a live round", async () => {
+        const t = setup();
+        const room = await joinRemote(t, live());
+        const before = drawnTargets(t.drawdy);
+        const frame = t.drawdy.elements.get("hunt-1")!;
+        frame.x += 150;
+        frame.y += 80;
+        mock.timers.tick(1_000);
+        await t.flush();
+        drawnTargets(t.drawdy).forEach((d, i) => {
+            assert.ok(Math.abs(d.cx - before[i].cx - 150) < 1e-6 && Math.abs(d.cy - before[i].cy - 80) < 1e-6, "previews follow within a tick");
+        });
+
+        frame.x += 50;
+        laser(t, [circleTarget(0, 200, 80)]);
+        await t.flush();
+        assert.equal(room.answer("ok"), "t0", "a stroke around where the target is now finds it");
+        room.snapshot(live("round-9", undefined, [findBy(0)]));
+        await t.flush();
+        const [marker] = markers(t.drawdy);
+        assert.ok(marker, "the marker is written");
+        assert.deepEqual([marker.x + marker.width / 2, marker.y + marker.height / 2], [340 + 200, 340 + 80], "around the target where it is now");
+
+        t.drawdy.elements.delete("hunt-1");
+        laser(t, [circleTarget(1, 200, 80)]);
+        await t.flush();
+        assert.equal(room.answer("ok"), "t1");
+        room.snapshot(live("round-9", undefined, [findBy(0), findBy(1)]));
+        await t.flush();
+        assert.equal(markers(t.drawdy).length, 1, "no marker once the frame is gone");
+    });
 });
