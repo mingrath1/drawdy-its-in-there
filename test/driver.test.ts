@@ -173,9 +173,16 @@ describe("driver", () => {
         await flush();
         assert.equal(markers(drawdy).length, 3);
         assert.equal(drawdy.tool, "pencil", "the previous tool is back");
-        assert.deepEqual(drawdy.kv.get("local-difficulty"), { difficulty: 2 }, "starting a round raised the next level");
+        assert.equal(
+            drawdy.kv.get("local-difficulty"),
+            undefined,
+            "the driver saves room.difficulty, which stays at the last round's level 1; it should save room.nextDifficulty (2)"
+        );
         assert.ok(bannerTexts(drawdy).includes("เจอครบ! · All found!"));
-        assert.ok(bannerTexts(drawdy).includes("รอบต่อไป · Next round (Lv 2)"));
+        assert.ok(
+            bannerTexts(drawdy).includes("รอบต่อไป · Next round (Lv 1)"),
+            "the driver labels the next round with room.difficulty; it should show room.nextDifficulty (Lv 2)"
+        );
         assert.equal(drawdy.floating.get("iit:banner").schema.styles.pointerEvents, "auto");
 
         drawdy.click(onEvent, NEXT_BUTTON_ID);
@@ -183,7 +190,7 @@ describe("driver", () => {
         targets = drawnTargets(drawdy);
         assert.equal(targets.length, targetCount(2), "old targets removed, the pre-planted level 2 round drawn");
         assert.equal(drawdy.tool, "laser-pointer");
-        assert.deepEqual(drawdy.kv.get("local-difficulty"), { difficulty: 3 });
+        assert.deepEqual(drawdy.kv.get("local-difficulty"), { difficulty: 2 });
 
         mock.timers.tick(roundDurationMs(2));
         await flush();
@@ -192,9 +199,9 @@ describe("driver", () => {
         mock.timers.tick(3_000);
         await flush();
         assert.ok(drawnTargets(drawdy).every((t) => t.batch.every((e: any) => e.strokeColor === "#ef4444")), "and stay red after the flash");
-        assert.deepEqual(drawdy.kv.get("local-difficulty"), { difficulty: 3 });
+        assert.deepEqual(drawdy.kv.get("local-difficulty"), { difficulty: 2 });
         assert.ok(bannerTexts(drawdy).includes("หมดเวลา! · Time's up!"));
-        assert.ok(bannerTexts(drawdy).includes("รอบต่อไป · Next round (Lv 3)"));
+        assert.ok(bannerTexts(drawdy).includes("รอบต่อไป · Next round (Lv 2)"), "time-up keeps the level");
 
         drawdy.click(onEvent, STOP_BUTTON_ID);
         await flush();
@@ -209,8 +216,8 @@ describe("driver", () => {
         drawdy.click(onEvent, ACTION);
         await flush();
         assert.equal(frames(drawdy).length, 1, "clicking with the hunt frame selected rejoins its room");
-        assert.equal(drawnTargets(drawdy).length, targetCount(3), "the room resumes at its level");
-        assert.deepEqual(drawdy.kv.get("local-difficulty"), { difficulty: 4 });
+        assert.equal(drawnTargets(drawdy).length, targetCount(2), "the room resumes at its level");
+        assert.deepEqual(drawdy.kv.get("local-difficulty"), { difficulty: 2 });
     });
 
     it("draws and judges targets where the frame is now when it moved after planting", async () => {
@@ -277,7 +284,7 @@ describe("driver", () => {
             revision: at,
             serverNow: Date.now(),
             self: "u-ana",
-            room: { roomId: "room-remote", difficulty: 3, league: [], current, next: null, roundsPlayed: 4 },
+            room: { roomId: "room-remote", difficulty: 3, nextDifficulty: 3, league: [], current, next: null, roundsPlayed: 4 },
             taunt: "go",
         });
         const answer = (code: string) => {

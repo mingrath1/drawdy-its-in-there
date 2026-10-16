@@ -8,6 +8,7 @@ const find = { targetId: "r1:0", playerId: "ana", playerName: "Ana", playerColor
 const room = (current: Room["current"]): Room => ({
   roomId: "room-1",
   difficulty: 1,
+  chosenDifficulty: null,
   league: [],
   current,
   next: null,

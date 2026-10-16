@@ -14,7 +14,7 @@ const GRID_CELLS = 32;
 /** A filled element (text, image) counts like this many strokes crossing each cell it covers. */
 const FILL_INK_PER_CELL = 1;
 
-// Tables indexed by difficulty 1, 2, 3, 4+.
+// Tables indexed by difficulty 1 to 4, which is MAX_DIFFICULTY in protocol.ts.
 /** Stamp side as a share of the local clutter scale. */
 const SIZE_FACTOR = [0.9, 0.72, 0.58, 0.48];
 /** How strongly a random draw competes with clutter when ranking spots. */

@@ -31,13 +31,24 @@ export const MAX_TARGETS = 16;
 /** Players a room lists. A new player's hello to a full league gets fault "full". */
 export const MAX_LEAGUE = 256;
 export const MIN_DIFFICULTY = 1;
-export const MAX_DIFFICULTY = 10;
+/** Every level changes the game: these tables and placement.ts's all reach their last row here. */
+export const MAX_DIFFICULTY = 4;
 
-/** Seconds shrink with difficulty, never below 30 s. */
-export const roundDurationMs = (difficulty: number): number =>
-    Math.max(30_000, 60_000 - (difficulty - 1) * 10_000);
+const ROUND_SECONDS = [60, 50, 40, 30];
+const TARGET_COUNTS = [3, 4, 5, 6];
+const levelIndex = (difficulty: number): number =>
+    Math.min(Math.max(Math.floor(difficulty), MIN_DIFFICULTY), MAX_DIFFICULTY) - MIN_DIFFICULTY;
 
-export const targetCount = (difficulty: number): number => Math.min(8, difficulty <= 1 ? 3 : difficulty === 2 ? 4 : 5);
+export const roundDurationMs = (difficulty: number): number => ROUND_SECONDS[levelIndex(difficulty)]! * 1_000;
+export const targetCount = (difficulty: number): number => TARGET_COUNTS[levelIndex(difficulty)]!;
+
+/** The level the next round plays at. rules.ts states the rule. */
+export function nextDifficulty(room: Room): number {
+    if (room.chosenDifficulty !== null) return room.chosenDifficulty;
+    const last = room.current;
+    const raise = last?.status === "ended" && last.reason === "all-found";
+    return raise ? Math.min(MAX_DIFFICULTY, room.difficulty + 1) : room.difficulty;
+}
 
 /** Stored in the hunt frame's meta under the key "iit". */
 export type FrameMeta = { v: 1; roomId: string; joinToken: string; backendUrl: string | null };
@@ -79,7 +90,10 @@ export type WireRound =
 
 export type WireRoom = {
     roomId: string;
+    /** The level of the current or most recent round. */
     difficulty: number;
+    /** The level the next round plays at. */
+    nextDifficulty: number;
     league: LeagueEntry[];
     current: WireRound | null;
     next: { status: "planting" | "ready"; id: string } | null;
@@ -122,6 +136,7 @@ export function toWire(room: Room): WireRoom {
     return {
         roomId: room.roomId,
         difficulty: room.difficulty,
+        nextDifficulty: nextDifficulty(room),
         league: room.league,
         current: room.current ? round(room.current) : null,
         next: next && (next.status === "planting" || next.status === "ready") ? { status: next.status, id: next.id } : null,
@@ -198,6 +213,7 @@ const wireRound: Check = (x) => {
 const wireRoom = shape({
     roomId: id,
     difficulty,
+    nextDifficulty: difficulty,
     league: array(leagueEntry, MAX_LEAGUE),
     current: nullable(wireRound),
     next: nullable(shape({ status: one("planting", "ready"), id })),

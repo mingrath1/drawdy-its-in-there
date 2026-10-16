@@ -13,13 +13,13 @@ export type RoundRejection =
 
 export type RoundResult = { ok: true; round: Round } | { ok: false; rejection: RoundRejection };
 
-export function plantingRound(id: string, frameRect: Rect): Round {
-    return { status: "planting", id, frameRect };
+export function plantingRound(id: string, frameRect: Rect, level: number): Round {
+    return { status: "planting", id, frameRect, level };
 }
 
 export function markReady(round: Round, targets: Target[]): RoundResult {
     if (round.status !== "planting") return illegal(round.status, "ready");
-    return ok({ status: "ready", id: round.id, frameRect: round.frameRect, targets });
+    return ok({ status: "ready", id: round.id, frameRect: round.frameRect, level: round.level, targets });
 }
 
 export function startRound(round: Round, now: number, durationMs: number): RoundResult {

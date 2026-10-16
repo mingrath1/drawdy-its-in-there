@@ -60,7 +60,7 @@ describe("local host", () => {
         assert.deepEqual(first.room.league, [{ playerId: "p1", playerName: "Ana", finds: 0, roundsWon: 0 }]);
     });
 
-    it("starts a live round with the protocol's count and clock, and raises the next round's level", async () => {
+    it("starts a live round at the room's level with the protocol's count and clock", async () => {
         const t = setup(2);
         await t.open();
         t.send({ type: "round.start", board: BOARD });
@@ -68,7 +68,7 @@ describe("local host", () => {
         assert.equal(round.targets.length, targetCount(2));
         assert.equal(round.endsAt - round.startedAt, roundDurationMs(2));
         assert.equal(t.results().at(-1)!.code, "ok");
-        assert.equal(t.snapshots().at(-1)!.room.difficulty, 3);
+        assert.equal(t.snapshots().at(-1)!.room.difficulty, 2);
         assert.ok(t.snapshots().at(-1)!.taunt, "the start comes with a taunt");
 
         t.send({ type: "round.start", board: BOARD });
@@ -102,7 +102,8 @@ describe("local host", () => {
         for (const target of t.live().targets) t.send({ type: "find.claim", roundId: t.live().id, targetId: target.id });
         const ended = t.current();
         assert.equal(ended?.status === "ended" && ended.reason, "all-found");
-        assert.equal(t.snapshots().at(-1)!.room.difficulty, 2);
+        assert.equal(t.snapshots().at(-1)!.room.difficulty, 1);
+        assert.equal(t.snapshots().at(-1)!.room.nextDifficulty, 2);
         assert.equal(t.snapshots().at(-1)!.room.league[0].roundsWon, 1);
         assert.ok(t.snapshots().at(-1)!.taunt);
     });
@@ -117,7 +118,8 @@ describe("local host", () => {
         assert.equal(ended?.status, "ended");
         assert.equal(ended?.status === "ended" && ended.reason, "time-up");
         assert.equal(ended?.status === "ended" && ended.endedAt, endsAt);
-        assert.equal(t.snapshots().at(-1)!.room.difficulty, 4);
+        assert.equal(t.snapshots().at(-1)!.room.difficulty, 3);
+        assert.equal(t.snapshots().at(-1)!.room.nextDifficulty, 3);
 
         t.send({ type: "find.claim", roundId: ended!.id, targetId: `${ended!.id}:0` });
         assert.equal(t.results().at(-1)!.code, "expired");
@@ -132,7 +134,7 @@ describe("local host", () => {
         assert.equal(t.results().at(-1)!.code, "ok");
         const next = t.snapshots().at(-1)!.room.next;
         assert.equal(next?.status, "ready");
-        t.send({ type: "round.cancel", roundId: first.id });
+        for (const target of first.targets) t.send({ type: "find.claim", roundId: first.id, targetId: target.id });
         t.send({ type: "round.start", board: BOARD });
         assert.equal(t.live().id, next!.id);
         assert.equal(t.live().targets.length, targetCount(2));
@@ -147,7 +149,7 @@ describe("local host", () => {
         t.send({ type: "round.cancel", roundId: t.live().id });
         t.send({ type: "difficulty.set", value: 4 });
         assert.equal(t.results().at(-1)!.code, "ok");
-        assert.equal(t.snapshots().at(-1)!.room.difficulty, 4);
+        assert.equal(t.snapshots().at(-1)!.room.nextDifficulty, 4);
     });
 
     it("speaks only valid protocol messages", async () => {

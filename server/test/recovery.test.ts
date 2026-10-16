@@ -1,10 +1,10 @@
 import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { Harness, ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
+import { defineDoc, Harness, type JsonObject, ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
 import { openDurableObjectSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/cloudflare";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { targetCount } from "../../src/shared/protocol.ts";
+import { MAX_DIFFICULTY, targetCount } from "../../src/shared/protocol.ts";
 import { HuntDoc, huntHarnessOptions, PlantNextRound, plain } from "../src/durable.ts";
 import { alice, board, bob, claim, joined, type LiveRound, roomKeys, snapshotWhere, startLive } from "./helpers.ts";
 
@@ -56,6 +56,73 @@ describe("room recovery", () => {
     b.close();
   });
 
+  it("opens a room stored under the old level rules, keeping its next level within MAX_DIFFICULTY", async () => {
+    // Version 1 kept the next round's level, up to 10, in difficulty, and a hash of the join token.
+    const HuntDocV1 = defineDoc<{ open: JsonObject | null }>({
+      kind: "app.hunt",
+      version: 1,
+      scope: "session",
+      initial: () => ({ open: null }),
+    });
+    for (const [stored, next] of [
+      [3, 3],
+      [7, MAX_DIFFICULTY],
+    ] as const) {
+      const keys = roomKeys();
+      const stub = env.ROOMS.getByName(keys.roomId);
+      await runInDurableObject(stub, async (_instance, state) => {
+        const harness = await openHarness(state);
+        try {
+          await harness.commit(async (tx) => {
+            const doc = await tx.doc(HuntDocV1);
+            doc.open = {
+              tokenHash: "0".repeat(64),
+              revision: 9,
+              taunt: null,
+              room: {
+                roomId: keys.roomId,
+                difficulty: stored,
+                league: [{ playerId: "alice", playerName: "Alice", finds: 3, roundsWon: 1 }],
+                current: {
+                  status: "ended",
+                  id: "old-round",
+                  frameRect: board.frameRect,
+                  targets: [
+                    {
+                      id: "old-round:0",
+                      stampId: "fish",
+                      rect: { x: 10, y: 10, width: 40, height: 40 },
+                      rotationDeg: 0,
+                      strokeColor: "#fff",
+                      strokeWidth: 2,
+                    },
+                  ],
+                  startedAt: 1,
+                  endedAt: 2,
+                  finds: [],
+                  reason: "all-found",
+                },
+                next: { status: "planting", id: "old-next", frameRect: board.frameRect },
+                roundsPlayed: 6,
+              },
+            };
+          }, context);
+        } finally {
+          await harness.close(context);
+        }
+      });
+      await evictDurableObject(stub);
+
+      const { client, first } = await joined(keys, bob);
+      expect(first.revision).toBeGreaterThan(9);
+      expect(first.room).toMatchObject({ nextDifficulty: next, next: null, roundsPlayed: 6 });
+      expect(first.room.league.map(({ playerId }) => playerId)).toEqual(["alice", "bob"]);
+      const round = await startLive(client);
+      expect(round.targets).toHaveLength(targetCount(next));
+      client.close();
+    }
+  });
+
   it("finishes a pre-plant that eviction interrupted", async () => {
     const keys = roomKeys();
     const stub = env.ROOMS.getByName(keys.roomId);
@@ -70,7 +137,7 @@ describe("room recovery", () => {
         await harness.commit(async (tx) => {
           const doc = await tx.doc(HuntDoc);
           const room = plain(doc.open!.room);
-          doc.open!.room = { ...room, next: { status: "planting", id: "seeded-next", frameRect: board.frameRect } };
+          doc.open!.room = { ...room, next: { status: "planting", id: "seeded-next", frameRect: board.frameRect, level: 2 } };
           doc.open!.revision += 1;
           await tx.createTask(
             PlantNextRound,

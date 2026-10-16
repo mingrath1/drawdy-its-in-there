@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { BoardSnapshot, Room, Round } from "./hunt.ts";
-import { MAX_DIFFICULTY, MAX_LEAGUE, roundDurationMs, targetCount } from "./protocol.ts";
+import { MAX_DIFFICULTY, MAX_LEAGUE, roundDurationMs, targetCount, toWire } from "./protocol.ts";
 import type { Command, Player } from "./protocol.ts";
 import { canJoin, expireRound, joinRoom, openRoom, plantFinished, reduce } from "./rules.ts";
 import type { RuleContext, Step } from "./rules.ts";
@@ -44,7 +44,7 @@ describe("rules", () => {
         const round = live(started.room);
         assert.equal(round.targets.length, targetCount(1));
         assert.equal(round.endsAt, 1_000 + roundDurationMs(1));
-        assert.equal(started.room.difficulty, 2);
+        assert.equal(started.room.difficulty, 1);
 
         const first = claim(started.room, round.id, round.targets[0]!.id, ana);
         assert.deepEqual(first.room.league.map((e) => [e.playerId, e.finds]), [["ana", 1], ["ben", 0]]);
@@ -129,12 +129,13 @@ describe("rules", () => {
             status: "ready",
             id: nextId,
             frameRect: board.frameRect,
+            level: 2,
             targets,
         });
         assert.equal(plantFinished(planting, nextId, []).next, null);
     });
 
-    it("promotes a ready next round on start and raises the level again", () => {
+    it("promotes a ready next round planted for the next level on start", () => {
         const first = start(lobby());
         const offered = offer(first.room, live(first.room).id).room;
         const nextTargets = live(first.room).targets.map((t) => ({ ...t, id: `n-${t.id}` }));
@@ -146,7 +147,52 @@ describe("rules", () => {
         assert.deepEqual([round.id, round.targets, round.startedAt], [offered.next!.id, nextTargets, 50_000]);
         assert.equal(round.endsAt, 50_000 + roundDurationMs(2));
         assert.equal(second.room.next, null);
-        assert.equal(second.room.difficulty, 3);
+        assert.equal(second.room.difficulty, 2);
+    });
+
+    it("promotes a pre-planted round only at the level and board size it was planted for", () => {
+        const first = start(lobby());
+        const round = live(first.room);
+        const offered = offer(first.room, round.id).room;
+        const nextId = offered.next!.id;
+        const ready = plantFinished(offered, nextId, round.targets.map((t) => ({ ...t, id: `n-${t.id}` })));
+        const startWith = (room: Room, frameRect = board.frameRect) =>
+            live(reduce(room, command({ type: "round.start", board: { ...board, frameRect } }), ana, context(50_000)).room);
+        const set = (room: Room, value: number) => reduce(room, command({ type: "difficulty.set", value }), ana, context(5_000)).room;
+
+        const allFound = clearAll(ready, [ana]);
+        assert.equal(startWith(allFound).id, nextId);
+        assert.equal(startWith(allFound, { ...board.frameRect, x: 500 }).id, nextId, "a moved frame of the same size");
+        assert.notEqual(startWith(expireRound(ready, round.endsAt)).id, nextId, "time-up keeps the level");
+        assert.notEqual(startWith(set(allFound, 3)).id, nextId, "difficulty.set chose another level");
+        const resized = startWith(allFound, { ...board.frameRect, width: 801 });
+        assert.notEqual(resized.id, nextId);
+        assert.equal(resized.frameRect.width, 801);
+    });
+
+    it("plays the next round one level up after all found, and at the same level after time-up or a cancel", () => {
+        const first = start(lobby());
+        assert.equal(first.room.difficulty, 1);
+        const allFound = clearAll(first.room, [ana]);
+        assert.equal(toWire(allFound).nextDifficulty, 2);
+
+        const second = start(allFound, 50_000).room;
+        const round = live(second);
+        assert.deepEqual([second.difficulty, round.targets.length, round.endsAt - 50_000], [2, targetCount(2), roundDurationMs(2)]);
+
+        const timedOut = expireRound(second, round.endsAt);
+        assert.equal(toWire(timedOut).nextDifficulty, 2);
+        assert.equal(start(timedOut, 200_000).room.difficulty, 2);
+
+        const cancelled = reduce(second, command({ type: "round.cancel", roundId: round.id }), ana, context(60_000)).room;
+        assert.deepEqual([cancelled.difficulty, cancelled.roundsPlayed, toWire(cancelled).nextDifficulty], [2, 1, 2]);
+        assert.equal(start(cancelled, 200_000).room.difficulty, 2);
+    });
+
+    it("stops raising the level at MAX_DIFFICULTY", () => {
+        let room = lobby();
+        for (let i = 0; i < MAX_DIFFICULTY + 2; i++) room = clearAll(start(room, 1_000 + i * 100_000).room, [ana]);
+        assert.deepEqual([room.difficulty, toWire(room).nextDifficulty], [MAX_DIFFICULTY, MAX_DIFFICULTY]);
     });
 
     it("plants afresh and drops a next round that is still planting", () => {
@@ -167,6 +213,7 @@ describe("rules", () => {
         const found = claim(room, round.id, round.targets[0]!.id, ana).room;
         const cancelled = reduce(found, command({ type: "round.cancel", roundId: round.id }), ben, context(3_000));
         assert.equal(cancelled.code, "ok");
+        assert.equal(cancelled.room.roundsPlayed, 0);
         assert.equal(cancelled.room.current?.status === "ended" && cancelled.room.current.reason, "cancelled");
         assert.deepEqual(cancelled.room.league, [
             { playerId: "ana", playerName: "Ana", finds: 1, roundsWon: 0 },
@@ -176,16 +223,18 @@ describe("rules", () => {
         assert.equal(again.code, "not-live");
     });
 
-    it("sets the level only between rounds and drops an unplayed next round", () => {
-        const { room } = start(lobby());
+    it("lets difficulty.set choose the next round's level only between rounds, even after all found", () => {
         const set = (r: Room, value: number) => reduce(r, command({ type: "difficulty.set", value }), ana, context(5_000));
-        assert.equal(set(room, 4).code, "busy");
+        assert.equal(start(set(lobby(), 3).room).room.difficulty, 3);
 
-        const offered = offer(room, live(room).id).room;
-        const ready = plantFinished(offered, offered.next!.id, live(room).targets);
-        const between = set(clearAll(ready, [ana]), MAX_DIFFICULTY);
-        assert.deepEqual([between.code, between.room.difficulty, between.room.next], ["ok", MAX_DIFFICULTY, null]);
-        assert.equal(live(start(between.room, 9_000).room).targets.length, targetCount(MAX_DIFFICULTY));
+        const { room } = start(lobby());
+        assert.equal(set(room, 3).code, "busy");
+        const allFound = clearAll(room, [ana]);
+        const chosen = set(allFound, 1);
+        assert.deepEqual([chosen.code, chosen.room.difficulty, toWire(chosen.room).nextDifficulty], ["ok", 1, 1]);
+        assert.equal(start(chosen.room, 9_000).room.difficulty, 1);
+        const hardest = start(set(allFound, MAX_DIFFICULTY).room, 9_000).room;
+        assert.equal(live(hardest).targets.length, targetCount(MAX_DIFFICULTY));
     });
 
     it("awards a round to everyone tied for the most finds, and a round nobody scored to nobody", () => {

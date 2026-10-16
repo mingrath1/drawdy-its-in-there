@@ -38,8 +38,9 @@ export type Find = {
  * Only "live" accepts finds. The first committed find for a target wins.
  */
 export type Round =
-    | { status: "planting"; id: string; frameRect: Rect }
-    | { status: "ready"; id: string; frameRect: Rect; targets: Target[] }
+    /** `level` is the difficulty it was planted for. It plays only at that level. */
+    | { status: "planting"; id: string; frameRect: Rect; level: number }
+    | { status: "ready"; id: string; frameRect: Rect; level: number; targets: Target[] }
     | {
           status: "live";
           id: string;
@@ -79,7 +80,10 @@ export type LeagueEntry = {
 /** Everything a room remembers across rounds and sessions. */
 export type Room = {
     roomId: string;
+    /** The level of the current or most recent round. Before any round, the level the first one plays at. */
     difficulty: number;
+    /** The level difficulty.set chose for the next round, until a round starts. */
+    chosenDifficulty: number | null;
     league: LeagueEntry[];
     current: Round | null;
     next: Round | null;

@@ -29,7 +29,7 @@ function unwrap(result: RoundResult): Round {
 }
 
 const sample: Record<RoundStatus, Round> = (() => {
-    const planting = plantingRound("r1", FRAME);
+    const planting = plantingRound("r1", FRAME, 1);
     const ready = unwrap(markReady(planting, TARGETS));
     const live = unwrap(startRound(ready, 1_000, 60_000));
     const ended = unwrap(endRound(live, 2_000, "cancelled"));

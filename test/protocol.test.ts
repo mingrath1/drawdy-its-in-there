@@ -10,6 +10,8 @@ import {
     parseFrameMeta,
     parseServer,
     ProtocolError,
+    roundDurationMs,
+    targetCount,
     toWire,
     type Command,
 } from "../src/shared/protocol.ts";
@@ -41,10 +43,11 @@ test("toWire hides targets of rounds that are not live", () => {
     const room: Room = {
         roomId: "room-1",
         difficulty: 1,
+        chosenDifficulty: null,
         league: [],
         roundsPlayed: 0,
-        current: { status: "ready", id: "a", frameRect, targets: [target] },
-        next: { status: "ready", id: "b", frameRect, targets: [target] },
+        current: { status: "ready", id: "a", frameRect, level: 1, targets: [target] },
+        next: { status: "ready", id: "b", frameRect, level: 2, targets: [target] },
     };
     const wire = toWire(room);
     assert.equal("targets" in (wire.current as object), false);
@@ -57,6 +60,7 @@ test("live rounds keep their targets on the wire", () => {
     const room: Room = {
         roomId: "room-1",
         difficulty: 2,
+        chosenDifficulty: null,
         league: [{ playerId: "p1", playerName: "Ann", finds: 1, roundsWon: 0 }],
         roundsPlayed: 1,
         current: { status: "live", id: "a", frameRect, targets: [target], startedAt: 1, endsAt: 60_001, finds: [] },
@@ -100,6 +104,13 @@ test("every accepted board plants a round whose snapshot clients accept", () => 
         }
     }
     assert.deepEqual([...accepted].sort(), ["atLowerBound", "nearUpperBound", "tall", "tiny", "wholePlane", "wide"]);
+});
+
+test("every level up to MAX_DIFFICULTY hides more targets in less time", () => {
+    for (let level = MIN_DIFFICULTY; level < MAX_DIFFICULTY; level++) {
+        assert.ok(targetCount(level + 1) > targetCount(level), `count at level ${level + 1}`);
+        assert.ok(roundDurationMs(level + 1) < roundDurationMs(level), `time at level ${level + 1}`);
+    }
 });
 
 test("frame meta is validated before connecting", () => {

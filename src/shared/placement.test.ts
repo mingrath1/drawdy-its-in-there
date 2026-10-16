@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { BoardItem, PlantRequest, Rect, Target } from "./hunt.ts";
 import { DEFAULT_STROKE_COLOR, plant } from "./placement.ts";
+import { MAX_DIFFICULTY } from "./protocol.ts";
 
 const FRAME: Rect = { x: 100, y: -50, width: 1200, height: 800 };
 
@@ -129,6 +130,9 @@ describe("plant", () => {
             return sides.reduce((a, b) => a + b, 0) / sides.length;
         };
         assert.ok(meanSide(3) < meanSide(1) * 0.8);
+        for (let level = 1; level < MAX_DIFFICULTY; level++) {
+            assert.ok(meanSide(level + 1) < meanSide(level), `level ${level + 1}`);
+        }
     });
 
     it("copies the stroke colour and width of the nearest ink", () => {

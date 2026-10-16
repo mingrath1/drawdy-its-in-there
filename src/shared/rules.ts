@@ -1,9 +1,12 @@
 // The game rules as a pure reducer over Room. The Room Durable Object and the driver's
 // offline LocalHost both run this file, so there is one copy of the rules.
 //
-// room.difficulty is the level the next round is planted at. Starting a round raises it
-// one step, board.offer plants the next round at it, and difficulty.set drops any unplayed
-// next round, so a pre-planted round always matches the room's level.
+// Levels: room.difficulty is the level of the current or most recent round. The next round
+// plays at the level difficulty.set chose since the last round started; otherwise one level
+// up (at most MAX_DIFFICULTY) after an all-found round, and at the same level before any
+// round, after time-up, or after a cancel, which also does not count in roundsPlayed.
+// board.offer pre-plants the next round one level up, and round.start plays it only at that
+// level on a board of the same size; otherwise it plants afresh.
 
 import type { BoardSnapshot, Find, LeagueEntry, PlantRequest, PlayerId, Room, Round, Target } from "./hunt.ts";
 import { plant } from "./placement.ts";
@@ -12,6 +15,7 @@ import {
     MAX_DIFFICULTY,
     MAX_LEAGUE,
     MIN_DIFFICULTY,
+    nextDifficulty,
     type Player,
     type ResultCode,
     roundDurationMs,
@@ -41,7 +45,15 @@ export type RuleContext = {
 export type Step = { room: Room; code: ResultCode; plant: PlantRequest | null };
 
 export function openRoom(roomId: string): Room {
-    return { roomId, difficulty: MIN_DIFFICULTY, league: [], current: null, next: null, roundsPlayed: 0 };
+    return {
+        roomId,
+        difficulty: MIN_DIFFICULTY,
+        chosenDifficulty: null,
+        league: [],
+        current: null,
+        next: null,
+        roundsPlayed: 0,
+    };
 }
 
 /** A listed player can always rejoin. A new one needs a free place in the league. */
@@ -104,19 +116,22 @@ const step = (room: Room, code: ResultCode, plantNext: PlantRequest | null = nul
 
 function start(room: Room, board: BoardSnapshot, context: RuleContext): Step {
     if (room.current?.status === "live") return step(room, "busy");
-    const difficulty = room.difficulty;
-    let ready: Round | null = room.next?.status === "ready" ? room.next : null;
+    const level = nextDifficulty(room);
+    const next = room.next;
+    const fits =
+        next?.status === "ready" &&
+        next.level === level &&
+        next.frameRect.width === board.frameRect.width &&
+        next.frameRect.height === board.frameRect.height;
+    let ready: Round | null = fits ? next : null;
     if (ready === null) {
-        const targets = plant(plantRequest(context, board, difficulty));
+        const targets = plant(plantRequest(context, board, level));
         if (targets.length === 0) return step(room, "busy");
-        ready = must(markReady(plantingRound(context.fresh.roundId, board.frameRect), targets));
+        ready = must(markReady(plantingRound(context.fresh.roundId, board.frameRect, level), targets));
     }
-    const live = must(startRound(ready, context.now, roundDurationMs(difficulty)));
-    // A next round still planting was planted for this level; dropping it lets board.offer plant the harder one.
-    return step(
-        { ...room, current: live, next: null, difficulty: Math.min(MAX_DIFFICULTY, difficulty + 1) },
-        "ok",
-    );
+    const live = must(startRound(ready, context.now, roundDurationMs(level)));
+    // Any other pre-planted round is dropped, so board.offer can plant the one after this.
+    return step({ ...room, current: live, next: null, difficulty: level, chosenDifficulty: null }, "ok");
 }
 
 /** The first offer during a live round plants the next one. Later offers change nothing. */
@@ -125,10 +140,11 @@ function offer(room: Room, afterRoundId: string, board: BoardSnapshot, context: 
     if (current === null || current.id !== afterRoundId) return step(room, "stale");
     if (current.status !== "live") return step(room, "not-live");
     if (room.next !== null) return step(room, "ok");
+    const level = Math.min(MAX_DIFFICULTY, room.difficulty + 1);
     return step(
-        { ...room, next: plantingRound(context.fresh.roundId, board.frameRect) },
+        { ...room, next: plantingRound(context.fresh.roundId, board.frameRect, level) },
         "ok",
-        plantRequest(context, board, room.difficulty),
+        plantRequest(context, board, level),
     );
 }
 
@@ -157,8 +173,8 @@ function cancel(room: Room, roundId: string, now: number): Step {
 
 function setDifficulty(room: Room, value: number): Step {
     if (room.current?.status === "live") return step(room, "busy");
-    if (value === room.difficulty) return step(room, "ok");
-    return step({ ...room, difficulty: value, next: null }, "ok");
+    if (value === nextDifficulty(room)) return step(room, "ok");
+    return step({ ...room, chosenDifficulty: value }, "ok");
 }
 
 function plantRequest(context: RuleContext, board: BoardSnapshot, difficulty: number): PlantRequest {
@@ -198,7 +214,7 @@ function finish(room: Room, round: Round, endedAt: number, reason: EndReason): R
     return {
         ...room,
         current: ended,
-        roundsPlayed: room.roundsPlayed + 1,
+        roundsPlayed: room.roundsPlayed + (reason === "cancelled" ? 0 : 1),
         league: room.league.map((e) => (winners.has(e.playerId) ? { ...e, roundsWon: e.roundsWon + 1 } : e)),
     };
 }

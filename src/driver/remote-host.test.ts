@@ -18,7 +18,7 @@ const snapshot = (revision: number): Snapshot => ({
     revision,
     serverNow: 1_000,
     self: "p1",
-    room: { roomId: "room-1", difficulty: 1, league: [], current: null, next: null, roundsPlayed: 0 },
+    room: { roomId: "room-1", difficulty: 1, nextDifficulty: 1, league: [], current: null, next: null, roundsPlayed: 0 },
     taunt: null,
 });
 const claim = (requestId: string): Command => ({ v: 1, type: "find.claim", requestId, roundId: "r1", targetId: "t1" });

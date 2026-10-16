@@ -163,7 +163,8 @@ describe("rounds", () => {
     const ended = await b.waitFor(isEnded);
     expect(ended.room).toMatchObject({
       current: { id: round.id, status: "ended", reason: "all-found" },
-      difficulty: 2,
+      difficulty: 1,
+      nextDifficulty: 2,
       roundsPlayed: 1,
       league: [
         { playerId: "alice", finds: 2, roundsWon: 1 },
@@ -379,16 +380,17 @@ describe("rounds", () => {
   it("cancels a live round and changes the level only between rounds", async () => {
     const { client } = await joined(roomKeys(), alice);
     const round = await startLive(client);
-    expect((await command(client, { type: "difficulty.set", value: 5 })).code).toBe("busy");
+    expect((await command(client, { type: "difficulty.set", value: 4 })).code).toBe("busy");
 
     expect((await command(client, { type: "round.cancel", roundId: round.id })).code).toBe("ok");
     const ended = await client.waitFor(isEnded);
     expect(ended.room.current).toMatchObject({ id: round.id, reason: "cancelled" });
 
-    expect((await command(client, { type: "difficulty.set", value: 5 })).code).toBe("ok");
+    expect(ended.room.roundsPlayed).toBe(0);
+    expect((await command(client, { type: "difficulty.set", value: 4 })).code).toBe("ok");
     const harder = await startLive(client);
-    expect(harder.targets).toHaveLength(targetCount(5));
-    expect(harder.endsAt - harder.startedAt).toBe(roundDurationMs(5));
+    expect(harder.targets).toHaveLength(targetCount(4));
+    expect(harder.endsAt - harder.startedAt).toBe(roundDurationMs(4));
     client.close();
   });
 });

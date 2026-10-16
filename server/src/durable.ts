@@ -11,7 +11,7 @@ import {
 } from "@earendil-works/pi-durable";
 import type { PlantRequest, Room } from "../../src/shared/hunt.ts";
 import { plant } from "../../src/shared/placement.ts";
-import type { ResultCode } from "../../src/shared/protocol.ts";
+import { MAX_DIFFICULTY, type ResultCode } from "../../src/shared/protocol.ts";
 import { plantFinished } from "../../src/shared/rules.ts";
 
 /** Storage keeps every change as a delta until a base replaces them, so store a base now and then. */
@@ -21,12 +21,23 @@ const rebase = (_value: unknown, _ops: unknown, { deltasSinceBase }: CheckpointI
 /** `revision` orders snapshots; `taunt` is the line for the change that produced this revision. */
 export type OpenRoom = { revision: number; taunt: string | null; room: Room };
 
+/** Version 1 kept the next round's level in `difficulty`, up to 10, and a hash of the join token. */
+type OpenRoomV1 = { revision: number; taunt: string | null; room: Omit<Room, "chosenDifficulty"> };
+
 /** `open` is null until the first hello creates the room. */
 export const HuntDoc = defineDoc<{ open: OpenRoom | null }>({
   kind: "app.hunt",
-  version: 1,
+  version: 2,
   scope: "session",
   initial: () => ({ open: null }),
+  // Keeps the level the next round plays at, and drops a pre-planted round, which had no level.
+  migrate: (value) => {
+    const open = value.open as OpenRoomV1 | null;
+    if (open === null) return { open: null };
+    const level = Math.min(MAX_DIFFICULTY, open.room.difficulty);
+    const room: Room = { ...open.room, difficulty: level, chosenDifficulty: level, next: null };
+    return { open: { revision: open.revision + 1, taunt: open.taunt, room } };
+  },
   checkpointWhen: rebase,
 });
 
