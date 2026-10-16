@@ -24,7 +24,7 @@ import {
   type Snapshot,
   toWire,
 } from "../../src/shared/protocol.ts";
-import { expireRound, joinRoom, openRoom, reduce, roundDeadline } from "../../src/shared/rules.ts";
+import { canJoin, expireRound, joinRoom, openRoom, reduce, roundDeadline } from "../../src/shared/rules.ts";
 import { STAMP_PACK } from "../../src/stamp-pack.ts";
 import {
   HuntDoc,
@@ -209,10 +209,12 @@ export class Room extends DurableObject<Env> {
       const doc = await tx.doc(HuntDoc);
       doc.open ??= { revision: 0, taunt: null, room: openRoom(hello.roomId) };
       const before = plain<RoomState>(doc.open.room);
+      if (!canJoin(before, hello.player.playerId)) return null;
       const after = joinRoom(expireRound(before, now), hello.player);
       publish(doc.open, before, after, this.#tauntFor(before, after));
       return plain<OpenRoom>(doc.open);
     }, context);
+    if (open === null) return this.#fault(socket, "full", 1008, RECOVERY_ALARM_DELAY_MS);
 
     socket.serializeAttachment({ ...state, player: hello.player } satisfies ConnectionState);
     this.#send(socket, snapshot(open, hello.player.playerId, null));

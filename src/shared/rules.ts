@@ -10,6 +10,7 @@ import { plant } from "./placement.ts";
 import {
     type Command,
     MAX_DIFFICULTY,
+    MAX_LEAGUE,
     MIN_DIFFICULTY,
     type Player,
     type ResultCode,
@@ -43,8 +44,14 @@ export function openRoom(roomId: string): Room {
     return { roomId, difficulty: MIN_DIFFICULTY, league: [], current: null, next: null, roundsPlayed: 0 };
 }
 
+/** A listed player can always rejoin. A new one needs a free place in the league. */
+export function canJoin(room: Room, playerId: PlayerId): boolean {
+    return room.league.length < MAX_LEAGUE || room.league.some((e) => e.playerId === playerId);
+}
+
 /** Lists a player in the league from their first hello and keeps their display name fresh. */
 export function joinRoom(room: Room, player: Player): Room {
+    if (!canJoin(room, player.playerId)) return room;
     const entry = room.league.find((e) => e.playerId === player.playerId);
     if (entry?.playerName === player.name) return room;
     const league = entry
@@ -178,11 +185,8 @@ function rejectionCode(rejection: RoundRejection): ResultCode {
     }
 }
 
-/** Finds count as they happen, so the scoreboard ticks during the round. */
+/** Finds count as they happen, so the scoreboard ticks during the round. Every finder joined the league first. */
 function credit(league: LeagueEntry[], find: Find): LeagueEntry[] {
-    if (!league.some((e) => e.playerId === find.playerId)) {
-        return [...league, { playerId: find.playerId, playerName: find.playerName, finds: 1, roundsWon: 0 }];
-    }
     return league.map((e) => (e.playerId === find.playerId ? { ...e, finds: e.finds + 1 } : e));
 }
 

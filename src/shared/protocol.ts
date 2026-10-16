@@ -28,6 +28,8 @@ export const MAX_BOARD_ITEMS = 500;
 export const MAX_POINTS_PER_ITEM = 128;
 export const MAX_TOTAL_POINTS = 8_192;
 export const MAX_TARGETS = 16;
+/** Players a room lists. A new player's hello to a full league gets fault "full". */
+export const MAX_LEAGUE = 256;
 export const MIN_DIFFICULTY = 1;
 export const MAX_DIFFICULTY = 10;
 
@@ -196,7 +198,7 @@ const wireRound: Check = (x) => {
 const wireRoom = shape({
     roomId: id,
     difficulty,
-    league: array(leagueEntry, 256),
+    league: array(leagueEntry, MAX_LEAGUE),
     current: nullable(wireRound),
     next: nullable(shape({ status: one("planting", "ready"), id })),
     roundsPlayed: uint,

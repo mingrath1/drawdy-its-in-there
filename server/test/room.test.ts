@@ -6,7 +6,7 @@ import { openDurableObjectSqliteStorage } from "@earendil-works/pi-durable/stora
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BoardSnapshot } from "../../src/shared/hunt.ts";
 import { HuntDoc, huntHarnessOptions, plain } from "../src/durable.ts";
-import { MAX_FRAME_CHARS, roundDurationMs, targetCount } from "../../src/shared/protocol.ts";
+import { MAX_FRAME_CHARS, MAX_LEAGUE, roundDurationMs, targetCount } from "../../src/shared/protocol.ts";
 import {
   alice,
   board,
@@ -93,6 +93,29 @@ describe("room access", () => {
     expect(first.room.league.map(({ playerId }) => playerId)).toEqual(["alice"]);
     client.close();
   });
+
+  it("refuses a new player once the league is full, changing nothing, and still admits a listed one", async () => {
+    const keys = roomKeys();
+    const player = (i: number) => ({ playerId: `p${i}`, name: `Player ${i}`, color: "#698cf9" });
+    let revision = 0;
+    for (let i = 0; i < MAX_LEAGUE; i++) {
+      const { client, first } = await joined(keys, player(i));
+      revision = first.revision;
+      client.close();
+      await client.closed;
+    }
+
+    const late = await connect(keys.roomId);
+    late.send({ v: 1, type: "hello", roomId: keys.roomId, joinToken: keys.joinToken, player: player(MAX_LEAGUE) });
+    await late.waitFor(faultCoded("full"));
+    expect((await late.closed).code).toBe(1008);
+
+    const { client: back, first } = await joined(keys, player(0));
+    expect(first.revision).toBe(revision);
+    expect(first.room.league).toHaveLength(MAX_LEAGUE);
+    expect(first.room.league.some(({ playerId }) => playerId === `p${MAX_LEAGUE}`)).toBe(false);
+    back.close();
+  }, 30_000);
 
   it("refuses commands before hello", async () => {
     const client = await connect(roomKeys().roomId);

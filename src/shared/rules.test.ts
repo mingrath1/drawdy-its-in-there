@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { BoardSnapshot, Room, Round } from "./hunt.ts";
-import { MAX_DIFFICULTY, roundDurationMs, targetCount } from "./protocol.ts";
+import { MAX_DIFFICULTY, MAX_LEAGUE, roundDurationMs, targetCount } from "./protocol.ts";
 import type { Command, Player } from "./protocol.ts";
-import { expireRound, joinRoom, openRoom, plantFinished, reduce } from "./rules.ts";
+import { canJoin, expireRound, joinRoom, openRoom, plantFinished, reduce } from "./rules.ts";
 import type { RuleContext, Step } from "./rules.ts";
 
 const board: BoardSnapshot = { frameRect: { x: 0, y: 0, width: 800, height: 600 }, items: [] };
@@ -23,6 +23,9 @@ const claim = (room: Room, roundId: string, targetId: string, by: Player, now = 
     reduce(room, command({ type: "find.claim", roundId, targetId }), by, context(now));
 const offer = (room: Room, afterRoundId: string, now = 2_000): Step =>
     reduce(room, command({ type: "board.offer", afterRoundId, board }), ana, context(now));
+
+/** Ana and Ben joined, as every finder does before a round. */
+const lobby = (): Room => joinRoom(joinRoom(openRoom("room-1"), ana), ben);
 
 function live(room: Room): Extract<Round, { status: "live" }> {
     assert.equal(room.current?.status, "live");
@@ -56,14 +59,14 @@ describe("rules", () => {
     });
 
     it("refuses a start while a round is live and changes nothing", () => {
-        const { room } = start(openRoom("room-1"));
+        const { room } = start(lobby());
         const again = start(room);
         assert.equal(again.code, "busy");
         assert.equal(again.room, room);
     });
 
     it("gives each target to its first claim only", () => {
-        const { room } = start(openRoom("room-1"));
+        const { room } = start(lobby());
         const round = live(room);
         const won = claim(room, round.id, round.targets[0]!.id, ana);
         const lost = claim(won.room, round.id, round.targets[0]!.id, ben);
@@ -75,7 +78,7 @@ describe("rules", () => {
     });
 
     it("ends the round at its deadline and answers late claims with expired", () => {
-        const { room } = start(openRoom("room-1"));
+        const { room } = start(lobby());
         const round = live(room);
         const late = claim(room, round.id, round.targets[0]!.id, ana, round.endsAt + 5_000);
         assert.equal(late.code, "expired");
@@ -88,7 +91,7 @@ describe("rules", () => {
     });
 
     it("plants the next round from the first offer during a live round and ignores later offers", () => {
-        const { room } = start(openRoom("room-1"));
+        const { room } = start(lobby());
         const round = live(room);
         const first = offer(room, round.id);
         assert.equal(first.code, "ok");
@@ -105,7 +108,7 @@ describe("rules", () => {
     });
 
     it("publishes planted targets only into the slot that asked for them", () => {
-        const { room } = start(openRoom("room-1"));
+        const { room } = start(lobby());
         const planting = offer(room, live(room).id).room;
         const nextId = planting.next!.id;
         const targets = live(room).targets;
@@ -120,7 +123,7 @@ describe("rules", () => {
     });
 
     it("promotes a ready next round on start and raises the level again", () => {
-        const first = start(openRoom("room-1"));
+        const first = start(lobby());
         const offered = offer(first.room, live(first.room).id).room;
         const nextTargets = live(first.room).targets.map((t) => ({ ...t, id: `n-${t.id}` }));
         const ready = plantFinished(offered, offered.next!.id, nextTargets);
@@ -135,7 +138,7 @@ describe("rules", () => {
     });
 
     it("plants afresh and drops a next round that is still planting", () => {
-        const first = start(openRoom("room-1"));
+        const first = start(lobby());
         const offered = offer(first.room, live(first.room).id).room;
         const cleared = clearAll(offered, [ana]);
         assert.equal(cleared.next?.status, "planting");
@@ -147,19 +150,22 @@ describe("rules", () => {
     });
 
     it("cancels a live round without awarding it", () => {
-        const { room } = start(openRoom("room-1"));
+        const { room } = start(lobby());
         const round = live(room);
         const found = claim(room, round.id, round.targets[0]!.id, ana).room;
         const cancelled = reduce(found, command({ type: "round.cancel", roundId: round.id }), ben, context(3_000));
         assert.equal(cancelled.code, "ok");
         assert.equal(cancelled.room.current?.status === "ended" && cancelled.room.current.reason, "cancelled");
-        assert.deepEqual(cancelled.room.league, [{ playerId: "ana", playerName: "Ana", finds: 1, roundsWon: 0 }]);
+        assert.deepEqual(cancelled.room.league, [
+            { playerId: "ana", playerName: "Ana", finds: 1, roundsWon: 0 },
+            { playerId: "ben", playerName: "Ben", finds: 0, roundsWon: 0 },
+        ]);
         const again = reduce(cancelled.room, command({ type: "round.cancel", roundId: round.id }), ben, context(4_000));
         assert.equal(again.code, "not-live");
     });
 
     it("sets the level only between rounds and drops an unplayed next round", () => {
-        const { room } = start(openRoom("room-1"));
+        const { room } = start(lobby());
         const set = (r: Room, value: number) => reduce(r, command({ type: "difficulty.set", value }), ana, context(5_000));
         assert.equal(set(room, 4).code, "busy");
 
@@ -171,7 +177,7 @@ describe("rules", () => {
     });
 
     it("awards a round to everyone tied for the most finds, and a round nobody scored to nobody", () => {
-        const { room } = start(openRoom("room-1"));
+        const { room } = start(lobby());
         const round = live(room);
         let tied = claim(room, round.id, round.targets[0]!.id, ana).room;
         tied = claim(tied, round.id, round.targets[1]!.id, ben).room;
@@ -187,5 +193,16 @@ describe("rules", () => {
         assert.deepEqual(room.league, [{ playerId: "ana", playerName: "Ana", finds: 0, roundsWon: 0 }]);
         assert.equal(joinRoom(room, ana), room);
         assert.equal(joinRoom(room, { ...ana, name: "Ana B" }).league[0]!.playerName, "Ana B");
+    });
+
+    it("lists at most MAX_LEAGUE players and still lets a listed one back in", () => {
+        let room = openRoom("room-1");
+        for (let i = 0; i < MAX_LEAGUE; i++) room = joinRoom(room, { playerId: `p${i}`, name: `P${i}`, color: "#fff" });
+        assert.equal(room.league.length, MAX_LEAGUE);
+        const late = { playerId: "late", name: "Late", color: "#fff" };
+        assert.equal(canJoin(room, late.playerId), false);
+        assert.equal(joinRoom(room, late), room);
+        assert.equal(canJoin(room, "p0"), true);
+        assert.equal(joinRoom(room, { playerId: "p0", name: "Back", color: "#fff" }).league[0]!.playerName, "Back");
     });
 });
