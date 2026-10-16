@@ -109,6 +109,7 @@ Notes:
 - The frame holds the room's join token. Anyone who can open the board can join the room.
 - A room takes 32 players online at once. Another player stays on "Connecting…" and retries until a place frees.
 - A room keeps up to 256 players on its scoreboard. A new player after that is told the room is full, because a scoreboard place never frees.
+- When the board syncs slowly between two tabs of the same player, both tabs can write a found marker for one find, and the extra circle stays until a later room update reaches a tab that sees both.
 - The `Room` class uses SQLite storage. Cloudflare's Workers Free plan allows only SQLite-backed Durable Objects, so this backend fits it. Free-plan usage has daily limits, so check your plan against [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/).
 
 ## Development
