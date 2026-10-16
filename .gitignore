@@ -1,0 +1,7 @@
+node_modules/
+dist/
+research/
+.audit/
+.dev.vars
+.wrangler/
+*.log

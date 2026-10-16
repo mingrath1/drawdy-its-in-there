@@ -1,0 +1,90 @@
+// The hunt domain, shared by the driver (src/) and the room backend (server/).
+// The driver bundle may import only relative files and @drawdy/driver-protocol types,
+// so this file has no imports.
+
+export type Rect = { x: number; y: number; width: number; height: number };
+
+/** A bundled stamp: human-drawn line art, normalized to a 0..1 box. */
+export type Stamp = {
+    id: string;
+    label: string;
+    /** Each stroke is a list of [x, y] points in the 0..1 box. */
+    strokes: ReadonlyArray<ReadonlyArray<readonly [number, number]>>;
+};
+
+/** One hidden thing. Rendered on every client as local preview strokes. */
+export type Target = {
+    id: string;
+    stampId: string;
+    /** Canvas-space box the stamp is drawn into. */
+    rect: Rect;
+    rotationDeg: number;
+    strokeColor: string;
+    strokeWidth: number;
+};
+
+export type PlayerId = string;
+
+export type Find = {
+    targetId: string;
+    playerId: PlayerId;
+    playerName: string;
+    playerColor: string;
+    at: number;
+};
+
+/**
+ * A round moves planting → ready → live → ended and never backwards.
+ * Only "live" accepts finds. The first committed find for a target wins.
+ */
+export type Round =
+    | { status: "planting"; id: string; frameRect: Rect }
+    | { status: "ready"; id: string; frameRect: Rect; targets: Target[] }
+    | {
+          status: "live";
+          id: string;
+          frameRect: Rect;
+          targets: Target[];
+          startedAt: number;
+          endsAt: number;
+          finds: Find[];
+      }
+    | {
+          status: "ended";
+          id: string;
+          frameRect: Rect;
+          targets: Target[];
+          startedAt: number;
+          endedAt: number;
+          finds: Find[];
+          reason: "all-found" | "time-up" | "cancelled";
+      };
+
+export type RoundStatus = Round["status"];
+
+export const ROUND_TRANSITIONS: Record<RoundStatus, readonly RoundStatus[]> = {
+    planting: ["ready", "ended"],
+    ready: ["live", "ended"],
+    live: ["ended"],
+    ended: [],
+};
+
+export type LeagueEntry = {
+    playerId: PlayerId;
+    playerName: string;
+    finds: number;
+    roundsWon: number;
+};
+
+/** Everything a room remembers across rounds and sessions. */
+export type Room = {
+    roomId: string;
+    difficulty: number;
+    league: LeagueEntry[];
+    current: Round | null;
+    next: Round | null;
+    roundsPlayed: number;
+};
+
+/** A laser stroke or circle a player drew, in canvas space, judged on pointer-up. */
+export type Circle = { points: ReadonlyArray<readonly [number, number]> };
