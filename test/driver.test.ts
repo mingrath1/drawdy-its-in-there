@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it, mock } from "node:test";
-import type { DriverManifest, ModuleStyling } from "@drawdy/driver-protocol";
+import type { DriverCommandIssuer, DriverManifest, ModuleStyling } from "@drawdy/driver-protocol";
 import { activate } from "../src/index.ts";
 import { createSend } from "../src/driver/command.ts";
 import { ACTION_BUTTON_ID as ACTION, createHuntDriver } from "../src/driver/hunt.ts";
@@ -85,9 +85,16 @@ function lcg(seed: number) {
     };
 }
 
-function setup() {
-    const drawdy = new FakeDrawdy();
-    const driver = createHuntDriver({ send: createSend(drawdy.issue, "mingrath1.its-in-there"), generateId: drawdy.generateId, styling: STYLING });
+function setup(drawdy = new FakeDrawdy()) {
+    const failures: ((request: any) => boolean)[] = [];
+    const issue = (async (request: any) => {
+        const i = failures.findIndex((match) => match(request));
+        if (i < 0) return drawdy.issue(request);
+        failures.splice(i, 1);
+        drawdy.commands.push(request);
+        return { ...request, res: { error: { type: "bad-argument", message: "injected failure" } } };
+    }) as unknown as DriverCommandIssuer;
+    const driver = createHuntDriver({ send: createSend(issue, "mingrath1.its-in-there"), generateId: drawdy.generateId, styling: STYLING });
     const onEvent = driver.handleEvent;
     const flush = async () => {
         for (let i = 0, stable = 0; i < 200 && stable < 3; i++) {
@@ -97,12 +104,100 @@ function setup() {
             stable = drawdy.commands.length === before ? stable + 1 : 0;
         }
     };
-    return { drawdy, driver, onEvent, flush };
+    /** The next command that matches fails, as when Drawdy answers with an error. */
+    const failOnce = (match: (request: any) => boolean) => failures.push(match);
+    return { drawdy, driver, onEvent, flush, failOnce };
 }
+
+/** Turns the event loop without waiting on the driver's queue, for when the queue itself may be stuck. */
+async function pump(until: () => boolean = () => false, turns = 200) {
+    for (let i = 0; i < turns && !until(); i++) await new Promise((resolve) => setImmediate(resolve));
+}
+
+const sockets: FakeSocket[] = [];
+const HUNT_FRAME = { x: 200, y: 100, width: 1000, height: 700 };
+const REMOTE_META = { v: 1, roomId: "room-remote", joinToken: "ab".repeat(32), backendUrl: "https://iit.example.workers.dev" };
+const remoteTarget = (i: number, stampId = "cat-face") => ({
+    id: `t${i}`,
+    stampId,
+    rect: { x: 300 + i * 250, y: 300, width: 80, height: 80 },
+    rotationDeg: 0,
+    strokeColor: "#e4e4e7",
+    strokeWidth: 2,
+});
+const circleTarget = (i: number, dx = 0, dy = 0) => loopAround({ cx: 340 + i * 250 + dx, cy: 340 + dy, w: 80, h: 80 });
+const MISS: Point[] = loopAround({ cx: 1100, cy: 700, w: 40, h: 40 });
+const live = (id = "round-9", targets = [0, 1, 2].map((i) => remoteTarget(i)), finds: unknown[] = []) => ({
+    status: "live",
+    id,
+    frameRect: HUNT_FRAME,
+    targets,
+    startedAt: Date.now(),
+    endsAt: Date.now() + 60_000,
+    finds,
+});
+const ended = (round: ReturnType<typeof live>, reason: string, finds: unknown[] = round.finds) => {
+    const { endsAt: _endsAt, ...rest } = round;
+    return { ...rest, status: "ended", endedAt: Date.now(), reason, finds };
+};
+const findBy = (i: number, playerId = "u-ana", playerName = "Ana", playerColor = "#ff4d4d") => ({
+    targetId: `t${i}`,
+    playerId,
+    playerName,
+    playerColor,
+    at: Date.now(),
+});
+
+/** Joins the remote room behind the hunt frame and delivers its first snapshot. */
+async function joinRemote(t: ReturnType<typeof setup>, first: unknown, difficulty = 3) {
+    if (!t.drawdy.elements.has("hunt-1")) t.drawdy.add({ id: "hunt-1", type: "frame", ...HUNT_FRAME, meta: { iit: REMOTE_META } });
+    await t.driver.activate();
+    const before = sockets.length;
+    t.drawdy.click(t.onEvent, ACTION);
+    await pump(() => sockets.length > before);
+    const socket = sockets[sockets.length - 1];
+    socket.accept();
+    let revision = 0;
+    const room = {
+        socket,
+        snapshot(current: unknown, options: { revision?: number; difficulty?: number } = {}) {
+            socket.deliver({
+                v: 1,
+                type: "snapshot",
+                revision: options.revision ?? ++revision,
+                serverNow: Date.now(),
+                self: "u-ana",
+                room: { roomId: "room-remote", difficulty: options.difficulty ?? difficulty, nextDifficulty: options.difficulty ?? difficulty, league: [], current, next: null, roundsPlayed: 4 },
+                taunt: "go",
+            });
+        },
+        sent: (type: string) => socket.sent.filter((m: any) => m.type === type) as any[],
+        /** Answers the latest find.claim and returns its target id. */
+        answer(code: string) {
+            const claim = room.sent("find.claim").at(-1);
+            assert.ok(claim, "a find.claim was sent");
+            socket.deliver({ v: 1, type: "result", requestId: claim.requestId, command: "find.claim", code, revision });
+            return claim.targetId as string;
+        },
+    };
+    room.snapshot(first);
+    await t.flush();
+    return room;
+}
+
+const laser = (t: ReturnType<typeof setup>, lasers: Point[][]) => t.drawdy.emit(t.onEvent, "subscription:tool:laser", { type: "laser-state-update", lasers });
 
 describe("driver", () => {
     let warnings: unknown[][];
+    const realWebSocket = globalThis.WebSocket;
     beforeEach(() => {
+        sockets.length = 0;
+        globalThis.WebSocket = class extends FakeSocket {
+            constructor(url: string) {
+                super(url);
+                sockets.push(this);
+            }
+        } as unknown as typeof WebSocket;
         mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"], now: 1_000_000 });
         mock.method(console, "log", () => {});
         warnings = [];
@@ -110,6 +205,7 @@ describe("driver", () => {
         mock.method(Math, "random", lcg(7));
     });
     afterEach(() => {
+        globalThis.WebSocket = realWebSocket;
         mock.timers.reset();
         mock.restoreAll();
     });
@@ -253,110 +349,57 @@ describe("driver", () => {
     });
 
     it("joins a remote room from its frame and marks only finds the room confirmed, once", async () => {
-        const sockets: FakeSocket[] = [];
-        const realWebSocket = globalThis.WebSocket;
-        globalThis.WebSocket = class extends FakeSocket {
-            constructor(url: string) {
-                super(url);
-                sockets.push(this);
-            }
-        } as unknown as typeof WebSocket;
-        try {
-        const { drawdy, driver, onEvent, flush } = setup();
-        const frameRect = { x: 200, y: 100, width: 1000, height: 700 };
-        const meta = { v: 1, roomId: "room-remote", joinToken: "ab".repeat(32), backendUrl: "https://iit.example.workers.dev" };
-        drawdy.add({ id: "hunt-1", type: "frame", ...frameRect, meta: { iit: meta } });
-        const target = (i: number) => ({
-            id: `t${i}`,
-            stampId: "cat-face",
-            rect: { x: 300 + i * 250, y: 300, width: 80, height: 80 },
-            rotationDeg: 0,
-            strokeColor: "#e4e4e7",
-            strokeWidth: 2,
-        });
-        const now = Date.now();
-        const live = { status: "live", id: "round-9", frameRect, targets: [0, 1, 2].map(target), startedAt: now, endsAt: now + 60_000 };
-        const find = (i: number, playerId: string, playerName: string, playerColor: string) => ({ targetId: `t${i}`, playerId, playerName, playerColor, at: now + i });
-        let revision = 0;
-        const snapshot = (current: unknown, at = ++revision) => ({
-            v: 1,
-            type: "snapshot",
-            revision: at,
-            serverNow: Date.now(),
-            self: "u-ana",
-            room: { roomId: "room-remote", difficulty: 3, nextDifficulty: 3, league: [], current, next: null, roundsPlayed: 4 },
-            taunt: "go",
-        });
-        const answer = (code: string) => {
-            const claim = sockets[0].sent.at(-1) as { type: string; requestId: string; targetId: string };
-            assert.equal(claim.type, "find.claim");
-            sockets[0].deliver({ v: 1, type: "result", requestId: claim.requestId, command: "find.claim", code, revision });
-            return claim.targetId;
-        };
-        const circle = (i: number) => loopAround({ cx: 340 + i * 250, cy: 340, w: 80, h: 80 });
-
-        await driver.activate();
-        drawdy.click(onEvent, ACTION);
-        // The click waits on the room's first snapshot, so pump until the socket exists instead of flushing.
-        for (let i = 0; i < 200 && sockets.length === 0; i++) await new Promise((resolve) => setImmediate(resolve));
+        const t = setup();
+        const { drawdy } = t;
+        const room = await joinRemote(t, live());
         assert.equal(frames(drawdy).length, 1, "no new frame: the one in view is joined");
-        assert.equal(sockets[0].url, "wss://iit.example.workers.dev/rooms/room-remote");
-        sockets[0].accept();
-        assert.deepEqual(sockets[0].sent, [
-            { v: 1, type: "hello", roomId: "room-remote", joinToken: meta.joinToken, player: { playerId: "u-ana", name: "Ana", color: "#ff4d4d" } },
-        ]);
-        sockets[0].deliver(snapshot({ ...live, finds: [] }));
-        await flush();
+        assert.equal(room.socket.url, "wss://iit.example.workers.dev/rooms/room-remote");
+        assert.deepEqual(room.socket.sent[0], {
+            v: 1,
+            type: "hello",
+            roomId: "room-remote",
+            joinToken: REMOTE_META.joinToken,
+            player: { playerId: "u-ana", name: "Ana", color: "#ff4d4d" },
+        });
         assert.equal(drawnTargets(drawdy).length, 3);
         assert.equal(drawdy.tool, "laser-pointer");
-        assert.equal(sockets[0].sent.length, 1, "a live room gets no round.start");
+        assert.equal(room.socket.sent.length, 1, "a live room gets no round.start");
 
-        const strokes = [circle(0)];
-        drawdy.emit(onEvent, "subscription:tool:laser", { type: "laser-state-update", lasers: strokes });
-        await flush();
-        assert.equal(answer("taken"), "t0");
-        sockets[0].deliver(snapshot({ ...live, finds: [find(0, "u-ben", "Ben", "#22c55e")] }));
-        await flush();
+        const strokes = [circleTarget(0)];
+        laser(t, strokes);
+        await t.flush();
+        assert.equal(room.answer("taken"), "t0");
+        room.snapshot(live("round-9", undefined, [findBy(0, "u-ben", "Ben", "#22c55e")]));
+        await t.flush();
         assert.equal(markers(drawdy).length, 0, "a lost claim writes no marker");
         assert.ok(drawnTargets(drawdy)[0].batch.every((e: any) => e.strokeColor === "#22c55e"), "Ben's find shows in Ben's colour");
 
-        strokes.push(circle(1));
-        drawdy.emit(onEvent, "subscription:tool:laser", { type: "laser-state-update", lasers: strokes });
-        await flush();
-        assert.equal(answer("ok"), "t1");
-        await flush();
+        strokes.push(circleTarget(1));
+        laser(t, strokes);
+        await t.flush();
+        assert.equal(room.answer("ok"), "t1");
+        await t.flush();
         assert.deepEqual(markers(drawdy).map((m) => m.meta.iitFound), ["round-9:t1"]);
         assert.equal(markers(drawdy)[0].frameId, "hunt-1");
 
         drawdy.add({ id: "other-tab-marker", type: "path", x: 800, y: 300, width: 100, height: 100, meta: { iitFound: "round-9:t2" } });
-        strokes.push(circle(2));
-        drawdy.emit(onEvent, "subscription:tool:laser", { type: "laser-state-update", lasers: strokes });
-        await flush();
-        assert.equal(answer("ok"), "t2");
-        await flush();
+        strokes.push(circleTarget(2));
+        laser(t, strokes);
+        await t.flush();
+        assert.equal(room.answer("ok"), "t2");
+        await t.flush();
         assert.equal(markers(drawdy).filter((m) => m.meta.iitFound === "round-9:t2").length, 1, "an existing tag is not written twice");
 
-        sockets[0].deliver(
-            snapshot({
-                ...{ ...live, endsAt: undefined },
-                status: "ended",
-                endedAt: Date.now(),
-                reason: "all-found",
-                finds: [find(0, "u-ben", "Ben", "#22c55e"), find(1, "u-ana", "Ana", "#ff4d4d"), find(2, "u-ana", "Ana", "#ff4d4d")],
-            })
-        );
-        await flush();
+        room.snapshot(ended(live(), "all-found", [findBy(0, "u-ben", "Ben", "#22c55e"), findBy(1), findBy(2)]));
+        await t.flush();
         assert.equal(drawdy.tool, "pencil");
         assert.ok(bannerTexts(drawdy).includes("เจอครบ! · All found!"));
 
-        sockets[0].deliver(snapshot({ ...live, finds: [] }, 1));
-        await flush();
+        room.snapshot(live(), { revision: 1 });
+        await t.flush();
         assert.equal(drawdy.tool, "pencil", "a stale snapshot is ignored");
         assert.ok(bannerTexts(drawdy).includes("เจอครบ! · All found!"));
         assert.deepEqual(warnings, []);
-        } finally {
-            globalThis.WebSocket = realWebSocket;
-        }
     });
 
     it("does nothing more when the scene permission is denied", async () => {
