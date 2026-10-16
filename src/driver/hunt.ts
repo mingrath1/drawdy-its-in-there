@@ -377,6 +377,8 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
                 h.host.send({ v: PROTOCOL_VERSION, type: "board.offer", requestId: nextRequestId(), afterRoundId: current.id, board: h.offerBoard });
                 h.offerBoard = null;
             }
+        } else if (current.status === "live") {
+            await drawMissing(h.round);
         }
         await paintFinds(h.round, current.finds);
         if (current.status === "ended" && !h.round.ended) await finishRound(h, h.round, current);
@@ -400,21 +402,33 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
                 continue;
             }
             const runs = stampRuns(stamp, planted);
-            const ids = runs.map(() => ctx.generateId());
-            const tv: TargetView = { planted, runs, ids, previewId: null, color: planted.strokeColor, strokeWidth: planted.strokeWidth };
-            view.targets.set(planted.id, tv);
-            try {
-                const { previewId } = await send({
-                    type: "command:scene:create-drawdy-preview-elements",
-                    req: { elements: previewLines(ids, placedRuns(view, tv), tv.color, tv.strokeWidth) },
-                });
-                tv.previewId = previewId;
-            } catch (error) {
-                warn(`could not draw target ${planted.id}:`, error instanceof Error ? error.message : error);
-            }
+            view.targets.set(planted.id, { planted, runs, ids: [], previewId: null, color: planted.strokeColor, strokeWidth: planted.strokeWidth });
         }
+        await drawMissing(view);
         log(`round ${round.id} is live: drew ${view.targets.size} targets, frame offset (${view.offset.dx}, ${view.offset.dy})`);
         return view;
+    }
+
+    /** A target without a preview is never judged. Each snapshot of a live round tries to draw it again. */
+    async function drawMissing(view: RoundView) {
+        for (const tv of view.targets.values()) {
+            if (tv.previewId) continue;
+            tv.ids = tv.runs.map(() => ctx.generateId());
+            try {
+                const { previewId, previewed } = await send({
+                    type: "command:scene:create-drawdy-preview-elements",
+                    req: { elements: previewLines(tv.ids, placedRuns(view, tv), tv.color, tv.strokeWidth) },
+                });
+                if (previewed === tv.ids.length) {
+                    tv.previewId = previewId;
+                    continue;
+                }
+                await quietly("removing a partly drawn target", send({ type: "command:scene:delete-drawdy-preview-elements", req: { previewIds: [previewId] } }));
+                warn(`target ${tv.planted.id} drew ${previewed} of ${tv.ids.length} lines; it is drawn again on the next snapshot`);
+            } catch (error) {
+                warn(`could not draw target ${tv.planted.id}:`, error instanceof Error ? error.message : error);
+            }
+        }
     }
 
     async function paint(view: RoundView, tv: TargetView, color: string, strokeWidth = tv.planted.strokeWidth) {
@@ -502,7 +516,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         for (const claim of h.claims.values()) if (claim.roundId === view.id) taken.add(claim.target.id);
         for (const stroke of fresh) {
             const hits = [...view.targets.values()].filter(
-                (tv) => !taken.has(tv.planted.id) && judge({ points: stroke }, shifted(tv.planted, view.offset))
+                (tv) => tv.previewId !== null && !taken.has(tv.planted.id) && judge({ points: stroke }, shifted(tv.planted, view.offset))
             );
             log(`laser stroke of ${stroke.length} points: ${hits.length > 0 ? `hit ${hits.map((tv) => tv.planted.id).join(", ")}` : "miss"}`);
             for (const tv of hits) {

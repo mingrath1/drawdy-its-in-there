@@ -86,13 +86,12 @@ function lcg(seed: number) {
 }
 
 function setup(drawdy = new FakeDrawdy()) {
-    const failures: ((request: any) => boolean)[] = [];
+    const overrides: { match: (request: any) => boolean; answer: (request: any) => Promise<any> }[] = [];
     const issue = (async (request: any) => {
-        const i = failures.findIndex((match) => match(request));
+        const i = overrides.findIndex((o) => o.match(request));
         if (i < 0) return drawdy.issue(request);
-        failures.splice(i, 1);
-        drawdy.commands.push(request);
-        return { ...request, res: { error: { type: "bad-argument", message: "injected failure" } } };
+        const [{ answer }] = overrides.splice(i, 1);
+        return answer(request);
     }) as unknown as DriverCommandIssuer;
     const driver = createHuntDriver({ send: createSend(issue, "mingrath1.its-in-there"), generateId: drawdy.generateId, styling: STYLING });
     const onEvent = driver.handleEvent;
@@ -105,8 +104,24 @@ function setup(drawdy = new FakeDrawdy()) {
         }
     };
     /** The next command that matches fails, as when Drawdy answers with an error. */
-    const failOnce = (match: (request: any) => boolean) => failures.push(match);
-    return { drawdy, driver, onEvent, flush, failOnce };
+    const failOnce = (match: (request: any) => boolean) =>
+        overrides.push({
+            match,
+            answer: async (request) => {
+                drawdy.commands.push(request);
+                return { ...request, res: { error: { type: "bad-argument", message: "injected failure" } } };
+            },
+        });
+    /** The next command that matches runs, and its answer is rewritten. */
+    const rewriteOnce = (match: (request: any) => boolean, rewrite: (value: any) => unknown) =>
+        overrides.push({
+            match,
+            answer: async (request) => {
+                const response = (await drawdy.issue(request)) as any;
+                return { ...response, res: { value: rewrite(response.res.value) } };
+            },
+        });
+    return { drawdy, driver, onEvent, flush, failOnce, rewriteOnce };
 }
 
 /** Turns the event loop without waiting on the driver's queue, for when the queue itself may be stuck. */
@@ -540,5 +555,37 @@ describe("driver", () => {
         room.snapshot(live("round-9", undefined, [findBy(0), findBy(1)]));
         await t.flush();
         assert.equal(markers(t.drawdy).length, 1, "no marker once the frame is gone");
+    });
+
+    it("never claims a target whose preview failed, and draws it on the next snapshot", async () => {
+        const t = setup();
+        t.failOnce((r) => r.type === "command:scene:create-drawdy-preview-elements");
+        const room = await joinRemote(t, live());
+        assert.equal(drawnTargets(t.drawdy).length, 2);
+        laser(t, [circleTarget(0)]);
+        await t.flush();
+        assert.equal(room.sent("find.claim").length, 0, "an undrawn target cannot be claimed");
+        room.snapshot(live());
+        await t.flush();
+        assert.equal(drawnTargets(t.drawdy).length, 3, "the next snapshot draws it");
+        laser(t, [circleTarget(0), circleTarget(0, 1)]);
+        await t.flush();
+        assert.deepEqual(room.sent("find.claim").map((c) => c.targetId), ["t0"]);
+    });
+
+    it("deletes a partly drawn target batch and redraws it on the next snapshot", async () => {
+        const t = setup();
+        t.rewriteOnce((r) => r.type === "command:scene:create-drawdy-preview-elements", (value) => ({ ...value, previewed: 1 }));
+        const room = await joinRemote(t, live());
+        assert.equal(drawnTargets(t.drawdy).length, 2, "the partial batch is gone");
+        laser(t, [circleTarget(0)]);
+        await t.flush();
+        assert.equal(room.sent("find.claim").length, 0);
+        room.snapshot(live());
+        await t.flush();
+        assert.equal(drawnTargets(t.drawdy).length, 3);
+        laser(t, [circleTarget(0), circleTarget(0, 1)]);
+        await t.flush();
+        assert.deepEqual(room.sent("find.claim").map((c) => c.targetId), ["t0"]);
     });
 });
