@@ -278,7 +278,10 @@ export function parseFrameMeta(meta: unknown): FrameMeta | null {
     return shape({ v: one(1), roomId: id, joinToken: token, backendUrl: nullable(url) })(iit) ? (iit as FrameMeta) : null;
 }
 
-/** Canonical JSON of a command minus its requestId, for detecting a changed payload under a reused id. */
+/**
+ * SHA-256 of a command's canonical JSON minus its requestId, for detecting a changed payload
+ * under a reused id. A hash keeps a receipt small however large the board it answered.
+ */
 export function commandFingerprint(command: Command): string {
     const { requestId: _ignored, ...rest } = command;
     const sort = (v: unknown): unknown =>
@@ -287,7 +290,7 @@ export function commandFingerprint(command: Command): string {
             : record(v)
               ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sort(v[k])]))
               : v;
-    return JSON.stringify(sort(rest));
+    return sha256Hex(JSON.stringify(sort(rest)));
 }
 
 

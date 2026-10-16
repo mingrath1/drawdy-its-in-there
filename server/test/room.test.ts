@@ -1,6 +1,7 @@
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { BoardSnapshot } from "../../src/shared/hunt.ts";
 import { MAX_FRAME_CHARS, roundDurationMs, targetCount } from "../../src/shared/protocol.ts";
 import {
   alice,
@@ -24,6 +25,15 @@ afterEach(() => {
 });
 
 const isEnded = snapshotWhere((room) => room.current?.status === "ended");
+
+/** Every row the room keeps in its own tables, so a test can look at what is stored. */
+const storedRows = (roomId: string): Promise<Record<string, unknown>[]> =>
+  runInDurableObject(env.ROOMS.getByName(roomId), (_instance, state) =>
+    state.storage.sql
+      .exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '\\_cf%' ESCAPE '\\'")
+      .toArray()
+      .flatMap(({ name }) => state.storage.sql.exec(`SELECT * FROM "${String(name)}"`).toArray()),
+  );
 
 describe("room access", () => {
   it("creates the room on the first hello over a null-origin socket", async () => {
@@ -100,13 +110,7 @@ describe("room access", () => {
   it("never stores the join token", async () => {
     const keys = roomKeys();
     const { client } = await joined(keys, alice);
-    const rows = await runInDurableObject(env.ROOMS.getByName(keys.roomId), (_instance, state) =>
-      state.storage.sql
-        .exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '\\_cf%' ESCAPE '\\'")
-        .toArray()
-        .flatMap(({ name }) => state.storage.sql.exec(`SELECT * FROM "${String(name)}"`).toArray()),
-    );
-    const stored = JSON.stringify(rows);
+    const stored = JSON.stringify(await storedRows(keys.roomId));
     expect(stored).toContain(keys.roomId);
     expect(stored).not.toContain(keys.joinToken);
     client.close();
@@ -227,6 +231,30 @@ describe("rounds", () => {
     expect((await claim(a, round, first!.id)).code).toBe("expired");
     a.close();
     b.close();
+  });
+
+  it("stores a receipt whose size does not grow with the board it answered", async () => {
+    const storedAfterStart = async (startBoard: BoardSnapshot): Promise<number> => {
+      const keys = roomKeys();
+      const { client } = await joined(keys, alice);
+      expect((await command(client, { type: "round.start", board: startBoard })).code).toBe("ok");
+      client.close();
+      return JSON.stringify(await storedRows(keys.roomId)).length;
+    };
+    const items = Array.from({ length: 500 }, (_, i) => ({
+      rect: { x: 10 + (i % 25) * 30, y: 10 + Math.floor(i / 25) * 28, width: 25, height: 25 },
+      kind: "freedraw" as const,
+      points: Array.from({ length: 14 }, (_, j): [number, number] => [
+        10.123456789 + (i % 25) * 30 + j,
+        10.987654321 + Math.floor(i / 25) * 28 + j,
+      ]),
+    }));
+    const bigBoard: BoardSnapshot = { frameRect: board.frameRect, items };
+    const extra = JSON.stringify(bigBoard).length - JSON.stringify(board).length;
+    expect(extra).toBeGreaterThan(150_000);
+
+    const growth = (await storedAfterStart(bigBoard)) - (await storedAfterStart(board));
+    expect(growth).toBeLessThan(2_000);
   });
 
   it("answers request-conflict when a requestId returns with a changed payload", async () => {
