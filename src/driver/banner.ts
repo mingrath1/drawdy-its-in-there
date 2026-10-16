@@ -15,10 +15,10 @@ type BannerTarget = { label: string; labelTh?: string; foundColor: string | null
 /** `nextLevel` is the room's nextDifficulty: the level the next round plays at. */
 export type BannerModel = { nextLevel: number; league: { name: string; finds: number }[] } & (
     | { phase: "connecting" }
-    | { phase: "idle" }
+    | { phase: "idle"; frameProblem: boolean }
     | { phase: "hiding" }
     | { phase: "live"; secondsLeft: number; targets: BannerTarget[]; taunt: string | null }
-    | { phase: "ended"; reason: EndReason; targets: BannerTarget[]; taunt: string | null }
+    | { phase: "ended"; reason: EndReason; targets: BannerTarget[]; taunt: string | null; frameProblem: boolean }
     | { phase: "full" }
 );
 
@@ -43,6 +43,9 @@ export function bannerSchema(model: BannerModel, styling: ModuleStyling): DomEle
         },
         children: [text(label, 12, primary ? styling.accentForeground : styling.foreground, "semibold")],
     });
+    /** Start sent nothing: the room refuses a frame under 1 unit wide or reaching past 1e7. */
+    const frameProblem = (on: boolean) =>
+        on ? [text("กรอบเล็กหรือไกลเกินไป · This frame is too small or too far away", 12, styling.destructive, "medium")] : [];
     const smallStop: DomElementSchema = {
         type: "button",
         domId: STOP_BUTTON_ID,
@@ -69,6 +72,7 @@ export function bannerSchema(model: BannerModel, styling: ModuleStyling): DomEle
         case "idle":
             interactive = true;
             body.push(text("ยังไม่มีรอบที่เล่นอยู่ · No round running", 13, styling.foreground, "semibold"));
+            body.push(...frameProblem(model.frameProblem));
             body.push(row([button(NEXT_BUTTON_ID, `เริ่ม · Start (Lv ${model.nextLevel})`, true), button(STOP_BUTTON_ID, "พอแล้ว · Stop", false)], 8));
             break;
         case "live": {
@@ -95,6 +99,7 @@ export function bannerSchema(model: BannerModel, styling: ModuleStyling): DomEle
             body.push(text(`เจอ ${found}/${total} · Found ${found}/${total}`, 12, styling.foreground, "medium"));
             if (model.taunt) body.push(text(model.taunt, 12, styling.mutedForeground));
             const next = `รอบต่อไป · Next round (Lv ${model.nextLevel})`;
+            body.push(...frameProblem(model.frameProblem));
             body.push(row([button(NEXT_BUTTON_ID, next, true), button(STOP_BUTTON_ID, "พอแล้ว · Stop", false)], 8));
             break;
         }

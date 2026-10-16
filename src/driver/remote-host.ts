@@ -187,18 +187,19 @@ export function createRemoteHost(options: RemoteHostOptions): HuntHost {
         send(command) {
             if (!isCommand(command)) {
                 warn("dropped an invalid command", (command as { type?: unknown }).type);
-                return;
+                return false;
             }
             const frame = encode(command);
             if (frame.length > MAX_FRAME_CHARS) {
                 warn(`dropped a ${command.type} of ${frame.length} characters; the room takes at most ${MAX_FRAME_CHARS}`);
-                return;
+                return false;
             }
             outbox.push(command);
             if (synced && socket?.readyState === OPEN) {
                 socket.send(frame);
                 armWatchdog(false);
             }
+            return true;
         },
         close() {
             receive = null;

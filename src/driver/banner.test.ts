@@ -34,12 +34,13 @@ const targets = [
 const base = { nextLevel: 3, league: [{ name: "Ana", finds: 3 }, { name: "Ben", finds: 1 }] };
 const models: BannerModel[] = [
     { ...base, phase: "connecting" },
-    { ...base, phase: "idle" },
+    { ...base, phase: "idle", frameProblem: false },
     { ...base, phase: "hiding" },
     { ...base, phase: "live", secondsLeft: 42.2, targets, taunt: "It's in there. Somewhere." },
-    { ...base, phase: "ended", reason: "all-found", targets, taunt: null },
-    { ...base, phase: "ended", reason: "time-up", targets, taunt: "หมดเวลา!" },
+    { ...base, phase: "ended", reason: "all-found", targets, taunt: null, frameProblem: false },
+    { ...base, phase: "ended", reason: "time-up", targets, taunt: "หมดเวลา!", frameProblem: true },
     { nextLevel: 1, league: [], phase: "full" },
+    { ...base, phase: "idle", frameProblem: true },
 ];
 
 function walk(schema: DomElementSchema, visit: (node: DomElementSchema) => void) {

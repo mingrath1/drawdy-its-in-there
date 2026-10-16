@@ -82,9 +82,9 @@ export function createLocalHost(options: LocalHostOptions): HuntHost {
         send(command) {
             if (!isCommand(command)) {
                 warn("local host dropped an invalid command", command);
-                return;
+                return false;
             }
-            if (!room || !player) return;
+            if (!room || !player) return false;
             const at = now();
             const key = `${player.playerId}:${command.requestId}`;
             const fingerprint = commandFingerprint(command);
@@ -110,6 +110,7 @@ export function createLocalHost(options: LocalHostOptions): HuntHost {
                 if (changed) sendSnapshot();
             }
             receive?.({ v: PROTOCOL_VERSION, type: "result", requestId: command.requestId, command: command.type, code, revision: resultRevision });
+            return true;
         },
         close() {
             receive = null;

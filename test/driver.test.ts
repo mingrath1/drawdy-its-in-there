@@ -201,6 +201,8 @@ async function joinRemote(t: ReturnType<typeof setup>, first: unknown, difficult
     return room;
 }
 
+const FRAME_PROBLEM = "กรอบเล็กหรือไกลเกินไป · This frame is too small or too far away";
+
 const laser = (t: ReturnType<typeof setup>, lasers: Point[][]) => t.drawdy.emit(t.onEvent, "subscription:tool:laser", { type: "laser-state-update", lasers });
 
 describe("driver", () => {
@@ -745,6 +747,40 @@ describe("driver", () => {
         t.drawdy.click(t.onEvent, NEXT_BUTTON_ID);
         await t.flush();
         assert.equal(room.sent("round.start").length, 3, "so does a snapshot showing the round it started");
+    });
+
+    it("says the frame is too small instead of starting, and starts once it is fixed", async () => {
+        const t = setup();
+        t.drawdy.add({ id: "hunt-1", type: "frame", ...HUNT_FRAME, width: 0.5, meta: { iit: REMOTE_META } });
+        const room = await joinRemote(t, null);
+        assert.equal(room.sent("round.start").length, 0, "a frame the room would refuse is not sent");
+        assert.ok(bannerTexts(t.drawdy).includes(FRAME_PROBLEM), "the banner says why");
+        assert.ok(bannerTexts(t.drawdy).includes("เริ่ม · Start (Lv 3)"), "and Start stays");
+
+        t.drawdy.elements.get("hunt-1")!.width = HUNT_FRAME.width;
+        t.drawdy.click(t.onEvent, NEXT_BUTTON_ID);
+        await t.flush();
+        assert.equal(room.sent("round.start").length, 1, "Start works once the frame is fixed");
+        assert.ok(!bannerTexts(t.drawdy).includes(FRAME_PROBLEM));
+    });
+
+    it("keeps Start free when a click finds the frame too far away", async () => {
+        const t = setup();
+        const room = await joinRemote(t, null);
+        const [first] = room.sent("round.start");
+        room.socket.deliver({ v: 1, type: "result", requestId: first.requestId, command: "round.start", code: "busy", revision: 1 });
+        await t.flush();
+        const frame = t.drawdy.elements.get("hunt-1")!;
+        frame.x = 1e7 - 10;
+        t.drawdy.click(t.onEvent, NEXT_BUTTON_ID);
+        await t.flush();
+        assert.equal(room.sent("round.start").length, 1);
+        assert.ok(bannerTexts(t.drawdy).includes(FRAME_PROBLEM));
+
+        frame.x = HUNT_FRAME.x;
+        t.drawdy.click(t.onEvent, NEXT_BUTTON_ID);
+        await t.flush();
+        assert.equal(room.sent("round.start").length, 2, "Start works once the frame is back");
     });
 
     it("plays without ever asking for storage", async () => {

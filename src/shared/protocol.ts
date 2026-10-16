@@ -128,11 +128,12 @@ export type ServerMessage = Snapshot | Result | Fault;
 /**
  * RemoteHost (WebSocket, reconnect, FIFO outbox replaying original requestIds) and
  * LocalHost (in process, no backend) both implement this. `open` resolves after the first
- * snapshot. `send` validates and queues. `close` stops transport only; a live round keeps going.
+ * snapshot. `send` validates and queues, and returns false for a command it dropped, which
+ * gets no result. `close` stops transport only; a live round keeps going.
  */
 export interface HuntHost {
     open(hello: Hello, receive: (message: ServerMessage) => void): Promise<void>;
-    send(command: Command): void;
+    send(command: Command): boolean;
     close(): void;
 }
 

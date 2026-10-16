@@ -156,8 +156,10 @@ describe("remote host", () => {
         t.last().deliver({ v: 1, type: "snapshot" });
         assert.deepEqual(t.received, []);
         t.last().deliver(snapshot(1));
-        t.host.send({ v: 1, type: "find.claim", requestId: "bad id with spaces", roundId: "r1", targetId: "t1" });
+        assert.equal(t.host.send({ v: 1, type: "find.claim", requestId: "bad id with spaces", roundId: "r1", targetId: "t1" }), false);
         assert.deepEqual(t.last().sent, [HELLO]);
+        assert.equal(t.host.send(claim("a")), true);
+        assert.deepEqual(t.last().sent, [HELLO, claim("a")]);
     });
 
     it("does not reconnect after close", async () => {
@@ -178,7 +180,7 @@ describe("remote host", () => {
         const item = { rect: { x: 0, y: 0, width: 1, height: 1 }, kind: "freedraw" as const, points };
         const big: Command = { v: 1, type: "round.start", requestId: "big", board: { frameRect: { x: 0, y: 0, width: 100, height: 100 }, items: Array(64).fill(item) } };
         assert.ok(encode(big).length > MAX_FRAME_CHARS);
-        t.host.send(big);
+        assert.equal(t.host.send(big), false);
         t.host.send(claim("a"));
         assert.deepEqual(t.last().sent, [HELLO, claim("a")]);
         assert.equal(warnings.length, 1);

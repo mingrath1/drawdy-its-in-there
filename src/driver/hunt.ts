@@ -81,6 +81,8 @@ type Hunt = {
     startOnOpen: boolean;
     /** The requestId of a round.start the room has neither answered nor acted on, so Start is not sent twice. */
     starting: string | null;
+    /** The last Start sent nothing, because the room would refuse the frame. Cleared once a round.start goes out or a round runs. */
+    frameProblem: boolean;
     round: RoundView | null;
     /**
      * Fingerprints of the laser strokes already seen, judged or not, across rounds. Null until the
@@ -159,6 +161,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             offerBoard: null,
             startOnOpen: true,
             starting: null,
+            frameProblem: false,
             round: null,
             strokes: null,
             claims: new Map(),
@@ -319,7 +322,10 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         }
         if (h.snapshot && message.revision <= h.snapshot.revision) return;
         h.snapshot = message;
-        if (isRunning(message.room.current)) h.starting = null;
+        if (isRunning(message.room.current)) {
+            h.starting = null;
+            h.frameProblem = false;
+        }
         h.clockSkew = message.serverNow - Date.now();
         if (message.taunt) h.taunt = message.taunt;
         const current = message.room.current;
@@ -355,9 +361,19 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         const board = boardSnapshot(rect, drawdyElements);
         const points = board.items.reduce((n, i) => n + (i.points?.length ?? 0), 0);
         log(`asking for a round: board has ${board.items.length} items and ${points} points`);
+        const requestId = nextRequestId();
+        // boardSnapshot keeps the items within the wire limits, so only the frame's rect as Drawdy reports it can fail.
+        const refused = !h.host.send({ v: PROTOCOL_VERSION, type: "round.start", requestId, board });
+        if (refused !== h.frameProblem) {
+            h.frameProblem = refused;
+            await renderBanner(h);
+        }
+        if (refused) {
+            log(`the room would refuse a frame of ${rect.width} by ${rect.height} at (${rect.x}, ${rect.y}); Start stays free`);
+            return;
+        }
         h.offerBoard = board;
-        h.starting = nextRequestId();
-        h.host.send({ v: PROTOCOL_VERSION, type: "round.start", requestId: h.starting, board });
+        h.starting = requestId;
     }
 
     async function renderRound(h: Hunt, current: WireRound | null) {
@@ -520,8 +536,9 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             for (const tv of hits) {
                 taken.add(tv.planted.id);
                 const requestId = nextRequestId();
-                h.claims.set(requestId, { roundId: view.id, targetId: tv.planted.id });
-                h.host.send({ v: PROTOCOL_VERSION, type: "find.claim", requestId, roundId: view.id, targetId: tv.planted.id });
+                if (h.host.send({ v: PROTOCOL_VERSION, type: "find.claim", requestId, roundId: view.id, targetId: tv.planted.id })) {
+                    h.claims.set(requestId, { roundId: view.id, targetId: tv.planted.id });
+                }
             }
         }
     }
@@ -642,7 +659,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         const league = (s?.room.league ?? []).map((e) => ({ name: e.playerName, finds: e.finds }));
         const round = s?.room.current ?? null;
         if (!s) return { nextLevel, league, phase: "connecting" };
-        if (!round) return { nextLevel, league, phase: "idle" };
+        if (!round) return { nextLevel, league, phase: "idle", frameProblem: h.frameProblem };
         if (round.status === "planting" || round.status === "ready") return { nextLevel, league, phase: "hiding" };
         const targets = round.targets.map((t) => {
             const stamp = stamps.get(t.stampId);
@@ -653,7 +670,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             const secondsLeft = (round.endsAt - (Date.now() + h.clockSkew)) / 1000;
             return { nextLevel, league, phase: "live", secondsLeft, targets, taunt: h.taunt };
         }
-        return { nextLevel, league, phase: "ended", reason: round.reason, targets, taunt: h.taunt };
+        return { nextLevel, league, phase: "ended", reason: round.reason, targets, taunt: h.taunt, frameProblem: h.frameProblem };
     }
 
     async function renderBanner(h: Hunt) {

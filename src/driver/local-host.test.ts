@@ -179,6 +179,16 @@ describe("local host", () => {
         assert.equal(t.snapshots().at(-1)!.room.nextDifficulty, 4);
     });
 
+    it("answers every command it queues, and says so; a command it drops gets no answer", async () => {
+        const t = setup();
+        await t.open();
+        const tiny: BoardSnapshot = { frameRect: { x: 0, y: 0, width: 0.5, height: 700 }, items: [] };
+        assert.equal(t.send({ type: "round.start", board: tiny }), false);
+        assert.equal(t.results().length, 0);
+        assert.equal(t.send({ type: "round.start", board: BOARD }), true);
+        assert.equal(t.results().length, 1);
+    });
+
     it("speaks only valid protocol messages", async () => {
         const t = setup();
         await t.open();
