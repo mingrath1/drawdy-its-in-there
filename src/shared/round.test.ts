@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { ROUND_TRANSITIONS } from "./hunt.ts";
 import type { Find, Round, RoundStatus, Target } from "./hunt.ts";
-import { allFound, claimFind, endRound, markReady, plantingRound, roundSettings, startRound } from "./round.ts";
+import { allFound, claimFind, endRound, markReady, plantingRound, startRound } from "./round.ts";
 import type { RoundResult } from "./round.ts";
 
 const FRAME = { x: 0, y: 0, width: 800, height: 600 };
@@ -37,14 +37,6 @@ const sample: Record<RoundStatus, Round> = (() => {
 })();
 
 describe("round", () => {
-    it("scales count and time with difficulty", () => {
-        assert.deepEqual(roundSettings(1), { count: 3, durationMs: 60_000 });
-        assert.deepEqual(roundSettings(2), { count: 4, durationMs: 50_000 });
-        assert.deepEqual(roundSettings(3), { count: 5, durationMs: 40_000 });
-        assert.deepEqual(roundSettings(4), { count: 5, durationMs: 30_000 });
-        assert.deepEqual(roundSettings(9), { count: 5, durationMs: 30_000 });
-    });
-
     it("runs planting, ready, live, and ends when every target is found", () => {
         const live = sample.live;
         assert.equal(live.status, "live");

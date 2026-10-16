@@ -13,15 +13,6 @@ export type RoundRejection =
 
 export type RoundResult = { ok: true; round: Round } | { ok: false; rejection: RoundRejection };
 
-/** How many targets a round hides and how long it runs, by difficulty (1 is easiest). */
-export function roundSettings(difficulty: number): { count: number; durationMs: number } {
-    const level = Math.max(1, Math.floor(difficulty));
-    return {
-        count: level === 1 ? 3 : level === 2 ? 4 : 5,
-        durationMs: Math.max(30, 60 - 10 * (level - 1)) * 1000,
-    };
-}
-
 export function plantingRound(id: string, frameRect: Rect): Round {
     return { status: "planting", id, frameRect };
 }
