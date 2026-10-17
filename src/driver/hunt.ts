@@ -14,7 +14,6 @@ import type { BannerModel } from "./banner.ts";
 import { BOARD_PROPERTIES, boardSnapshot } from "./board.ts";
 import { CommandError, log, warn } from "./command.ts";
 import type { Send } from "./command.ts";
-import { BACKEND_URL } from "./config.ts";
 import { domSchemaProblems } from "./dom-schema.ts";
 import { createLocalHost } from "./local-host.ts";
 import { createRemoteHost } from "./remote-host.ts";
@@ -37,7 +36,7 @@ const MIN_ZONE = 240;
 const VIEW_INSET = 0.1;
 const SELECTION_PADDING = 24;
 
-export type DriverContext = { send: Send; generateId: () => string; styling: ModuleStyling };
+export type DriverContext = { send: Send; generateId: () => string; styling: ModuleStyling; backendUrl: string | null };
 
 export type HuntDriver = {
     activate(): Promise<void>;
@@ -254,7 +253,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
 
     async function createFrame(rect: Rect): Promise<{ frameId: string; rect: Rect; meta: FrameMeta }> {
         const joinToken = toHex(crypto.getRandomValues(new Uint8Array(32)));
-        const meta: FrameMeta = { v: 1, roomId: deriveRoomId(joinToken), joinToken, backendUrl: BACKEND_URL };
+        const meta: FrameMeta = { v: 1, roomId: deriveRoomId(joinToken), joinToken, backendUrl: ctx.backendUrl };
         if (!parseFrameMeta({ iit: meta })) throw new Error("built a hunt frame meta that does not validate");
         const frameId = ctx.generateId();
         await send({
