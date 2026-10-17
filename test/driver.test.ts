@@ -1359,6 +1359,14 @@ describe("driver", () => {
         assert.deepEqual(markers(t.drawdy).map((m) => m.meta.iitFound), ["round-7:t2"]);
     });
 
+    it("writes the last ended round's failed marker after leaving and rejoining once the next round has ended too", async () => {
+        const t = setup();
+        await failedMarkerAtEnd(t);
+        deliverSnapshot(await rejoin(t), 1, ended(live("round-8"), "time-up"));
+        await t.flush();
+        assert.deepEqual(markers(t.drawdy).map((m) => m.meta.iitFound), ["round-7:t2"]);
+    });
+
     it("keeps the last ended round to its own frame when a hunt moves to another frame and back", async () => {
         const t = setup();
         await failedMarkerAtEnd(t);

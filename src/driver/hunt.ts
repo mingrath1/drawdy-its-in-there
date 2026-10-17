@@ -363,10 +363,11 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             `snapshot r${message.revision}: ${current ? `${current.status} ${current.id}` : "no round"}, level ${message.room.difficulty}, next ${message.room.nextDifficulty}`
         );
         await renderRound(h, current);
-        if (current?.status === "ended") lastEnded.set(h.frameId, current);
         const view = h.round;
         if (view) for (const [targetId, state] of view.beaten) if (state === "waiting") beatenTo(h, view, targetId);
         await quietly("writing found markers", markFinds(h, message));
+        // Only after the markers, so a snapshot whose round already ended still heals the one that ended before it.
+        if (current?.status === "ended") lastEnded.set(h.frameId, current);
         if (h.startOnOpen) {
             h.startOnOpen = false;
             if (!isRunning(current)) await requestRound(h);
