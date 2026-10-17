@@ -91,7 +91,7 @@ type Hunt = {
     host: HuntHost;
     snapshot: Snapshot | null;
     clockSkew: number;
-    /** The host's latest line. Snapshots without a new moment carry none, so the last one stays up. */
+    /** The host's latest line. A snapshot without one keeps it only when it directly follows, in the same round. */
     taunt: string | null;
     /** The board our last round.start sent, offered once more to plant the next round while this one plays. */
     offerBoard: BoardSnapshot | null;
@@ -347,6 +347,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         }
         if (h.snapshot && message.revision < h.snapshot.revision) return;
         if (h.snapshot?.revision === message.revision) return repair(h, message);
+        const follows = h.snapshot?.revision === message.revision - 1 && h.snapshot.room.current?.id === message.room.current?.id;
         h.snapshot = message;
         if (isRunning(message.room.current)) {
             h.starting = null;
@@ -354,6 +355,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         }
         h.clockSkew = message.serverNow - Date.now();
         if (message.taunt) h.taunt = message.taunt;
+        else if (!follows) h.taunt = null;
         const current = message.room.current;
         log(
             `snapshot r${message.revision}: ${current ? `${current.status} ${current.id}` : "no round"}, level ${message.room.difficulty}, next ${message.room.nextDifficulty}`

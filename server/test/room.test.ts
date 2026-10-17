@@ -499,6 +499,21 @@ describe("snapshots", () => {
     expect(sent[0]!.taunt).toEqual(expect.any(String));
     client.close();
   });
+
+  it("gives a reconnect whose hello changes nothing the taunt of the latest revision", async () => {
+    const keys = roomKeys();
+    const { client: a } = await joined(keys, alice);
+    const round = await startLive(a);
+    const result = await claim(a, round, round.targets[0]!.id);
+    expect(result.code).toBe("ok");
+    const found = await a.waitFor(snapshotWhere((_room, snapshot) => snapshot.revision === result.revision));
+    expect(found.taunt).toEqual(expect.any(String));
+    a.close();
+
+    const { client: again, first } = await joined(keys, alice);
+    expect(first).toMatchObject({ revision: found.revision, taunt: found.taunt });
+    again.close();
+  });
 });
 
 describe("wire safety", () => {

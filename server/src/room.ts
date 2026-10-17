@@ -236,7 +236,7 @@ export class Room extends DurableObject<Env> {
       return { open: plain<OpenRoom>(doc.open), published };
     }, context);
     if (typeof admitted === "string") return this.#fault(socket, admitted, 1008, RECOVERY_ALARM_DELAY_MS);
-    if (!admitted.published) this.#send(socket, snapshot(admitted.open, player.playerId, null));
+    if (!admitted.published) this.#send(socket, snapshot(admitted.open, player.playerId, admitted.open.taunt));
     await this.#refreshAlarmAfterReply();
   }
 

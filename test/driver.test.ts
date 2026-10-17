@@ -200,7 +200,7 @@ async function joinRemote(t: ReturnType<typeof setup>, first: unknown, difficult
     let revision = 0;
     const room = {
         socket,
-        snapshot(current: unknown, options: { revision?: number; difficulty?: number; nextDifficulty?: number; league?: unknown[] } = {}) {
+        snapshot(current: unknown, options: { revision?: number; difficulty?: number; nextDifficulty?: number; league?: unknown[]; taunt?: string | null } = {}) {
             socket.deliver({
                 v: 1,
                 type: "snapshot",
@@ -216,7 +216,7 @@ async function joinRemote(t: ReturnType<typeof setup>, first: unknown, difficult
                     next: null,
                     roundsPlayed: 4,
                 },
-                taunt: "go",
+                taunt: options.taunt === undefined ? "go" : options.taunt,
             });
         },
         sent: (type: string) => socket.sent.filter((m: any) => m.type === type) as any[],
@@ -859,6 +859,40 @@ describe("driver", () => {
         assert.deepEqual(markers(t.drawdy).map((m) => m.meta.iitFound), ["round-9:t1"], "the marker is written");
         assert.equal(drawnTargets(t.drawdy).length, 3, "the missing target is drawn");
         assert.equal(upserts(), before, "the banner is not redrawn for a revision it has shown");
+    });
+
+    it("keeps a taunt through the next snapshot of its round, and drops it after a missed revision unless a new one comes", async () => {
+        const t = setup();
+        const room = await joinRemote(t, live());
+        room.snapshot(live("round-9", undefined, [ben(0)]), { revision: 2, taunt: "Ben takes the lead!" });
+        await t.flush();
+        assert.ok(bannerTexts(t.drawdy).includes("Ben takes the lead!"));
+
+        room.snapshot(live("round-9", undefined, [ben(0)]), { revision: 3, taunt: null, league: [entry("u-cat", "Cat")] });
+        await t.flush();
+        assert.ok(bannerTexts(t.drawdy).includes("Ben takes the lead!"), "someone joining the league keeps it");
+
+        room.snapshot(live("round-9", undefined, [ben(0), findBy(1)]), { revision: 5, taunt: "Ana takes the lead!" });
+        await t.flush();
+        assert.ok(bannerTexts(t.drawdy).includes("Ana takes the lead!"), "a missed revision with its own taunt shows it");
+
+        room.snapshot(live("round-9", undefined, [ben(0), findBy(1), ben(2)]), { revision: 7, taunt: null });
+        await t.flush();
+        assert.ok(bannerTexts(t.drawdy).includes("หาของที่ซ่อนอยู่ 3 ชิ้น · Find 3 hidden things"), "the live banner renders");
+        assert.ok(!bannerTexts(t.drawdy).includes("Ana takes the lead!"), "a missed revision without one drops the old line");
+    });
+
+    it("drops the last round's taunt when the next round comes without one", async () => {
+        const t = setup();
+        const room = await joinRemote(t, live("round-1"));
+        room.snapshot(ended(live("round-1"), "time-up"), { revision: 2, taunt: "Time's up. They were right there." });
+        await t.flush();
+        assert.ok(bannerTexts(t.drawdy).includes("Time's up. They were right there."));
+
+        room.snapshot(live("round-2"), { revision: 3, taunt: null });
+        await t.flush();
+        assert.ok(bannerTexts(t.drawdy).includes("หาของที่ซ่อนอยู่ 3 ชิ้น · Find 3 hidden things"), "the new round's banner renders");
+        assert.ok(!bannerTexts(t.drawdy).includes("Time's up. They were right there."));
     });
 
     it("writes our missing markers when it joins a round, as after a reload", async () => {
