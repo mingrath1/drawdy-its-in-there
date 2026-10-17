@@ -1,0 +1,69 @@
+Two-player race against the deployed Worker, 2026-10-17. Worker its-in-there-room, version 44969932-9ada-4929-93bf-699585c18224, main at 858b23b.
+Command: node scripts/race-check.mjs . https://its-in-there-room.mingrath.workers.dev (exit 0), a fresh random join token. curl: GET /rooms/x -> 426, OPTIONS with Origin: null -> 204.
+
+[+    1 ms] backend https://its-in-there-room.mingrath.workers.dev, room f091d330e0c9…
+[+  122 ms] [bot] 17:51:06.013 joining room f091d330 as Ben (bot-ben) at https://its-in-there-room.mingrath.workers.dev: claims at 3 s, then every 3 s, at most 2 per round
+[+  883 ms] [bot] 17:51:06.776 snapshot r2: no round yet. league: Ana 0 finds, 0 rounds won; Ben 0 finds, 0 rounds won
+[+  927 ms] [bot] 17:51:06.820 snapshot r3: no round yet. league: Ana 0 finds, 0 rounds won; Ben 0 finds, 0 rounds won
+[+  928 ms] [ana] difficulty.set -> ok
+[+  928 ms] PASS difficulty set to 2
+[+ 1002 ms] [bot] 17:51:06.895 snapshot r4: live dea0ab51, 0 of 4 found. league: Ana 0 finds, 0 rounds won; Ben 0 finds, 0 rounds won
+[+ 1002 ms] [bot] 17:51:06.895 taunt: Ready, set, squint.
+[+ 1002 ms] [ana] taunt r4: Ready, set, squint.
+[+ 1002 ms] [ana] round.start -> ok
+[+ 1002 ms] PASS round.start answered ok
+[+ 1002 ms] PASS round 1 hides 4 targets (got 4)
+[+ 1048 ms] [ana] taunt r5: Nothing gets past you.
+[+ 1048 ms] [bot] 17:51:06.941 snapshot r5: live dea0ab51, 1 of 4 found (Ana 1). league: Ana 1 find, 0 rounds won; Ben 0 finds, 0 rounds won
+[+ 1048 ms] [bot] 17:51:06.941 taunt: Nothing gets past you.
+[+ 1049 ms] [ana] find.claim :3 -> ok
+[+ 4042 ms] [bot] 17:51:09.934 snapshot r6: live dea0ab51, 2 of 4 found (Ana 1, Ben 1). league: Ana 1 find, 0 rounds won; Ben 1 find, 0 rounds won
+[+ 4042 ms] [bot] 17:51:09.934 taunt: Ben ตามทันแล้ว! · Ben ties it up!
+[+ 4042 ms] [bot] 17:51:09.935 claim dea0ab51-ed5d-4591-8e1c-4f6a2fbbbb52:0 -> ok (r6)
+[+ 4042 ms] [ana] taunt r6: Ben ตามทันแล้ว! · Ben ties it up!
+[+ 6964 ms] [ana] taunt r7: Ben ขึ้นนำแล้ว! · Ben is out front!
+[+ 6964 ms] [bot] 17:51:12.857 snapshot r7: live dea0ab51, 3 of 4 found (Ben 2, Ana 1). league: Ana 1 find, 0 rounds won; Ben 2 finds, 0 rounds won
+[+ 6964 ms] [bot] 17:51:12.857 taunt: Ben ขึ้นนำแล้ว! · Ben is out front!
+[+ 6964 ms] [bot] 17:51:12.857 claim dea0ab51-ed5d-4591-8e1c-4f6a2fbbbb52:1 -> ok (r7)
+[+ 7005 ms] [ana] taunt r8: เสมอกัน! ตัดสินกันรอบหน้า · Dead heat. Settle it next round.
+[+ 7006 ms] [bot] 17:51:12.898 snapshot r8: ended (all-found) dea0ab51, 4 of 4 found (Ben 2, Ana 2). league: Ana 2 finds, 1 round won; Ben 2 finds, 1 round won
+[+ 7006 ms] [bot] 17:51:12.898 taunt: เสมอกัน! ตัดสินกันรอบหน้า · Dead heat. Settle it next round.
+[+ 7006 ms] [ana] find.claim :2 -> ok
+[+ 7308 ms] PASS round 1: a taunt names Ben tying it up
+[+ 7308 ms] PASS round 1: a taunt names Ben taking the lead
+[+ 7308 ms] PASS round 1 ends on the dead-heat line: เสมอกัน! ตัดสินกันรอบหน้า · Dead heat. Settle it next round.
+[+ 7308 ms] PASS a tie counts as a round won for both: {"Ana":1,"Ben":1}
+[+ 7361 ms] [ana] taunt r9: ดูดีๆ มันอยู่ในรูปนั่นแหละ
+[+ 7361 ms] [ana] round.start -> ok
+[+ 7361 ms] PASS round.start answered ok
+[+ 7361 ms] PASS round 2 is one level up: 5 targets (got 5)
+[+ 7361 ms] [bot] 17:51:13.254 snapshot r9: live 31dfe2a7, 0 of 5 found. league: Ana 2 finds, 1 round won; Ben 2 finds, 1 round won
+[+ 7361 ms] [bot] 17:51:13.254 taunt: ดูดีๆ มันอยู่ในรูปนั่นแหละ
+[+ 7402 ms] [ana] taunt r10: ตาไวมาก!
+[+ 7403 ms] [bot] 17:51:13.295 snapshot r10: live 31dfe2a7, 1 of 5 found (Ana 1). league: Ana 3 finds, 1 round won; Ben 2 finds, 1 round won
+[+ 7403 ms] [bot] 17:51:13.295 taunt: ตาไวมาก!
+[+ 7403 ms] [ana] find.claim :4 -> ok
+[+10398 ms] [ana] taunt r11: Ben ตามทันแล้ว! · Ben ties it up!
+[+10398 ms] [bot] 17:51:16.291 snapshot r11: live 31dfe2a7, 2 of 5 found (Ana 1, Ben 1). league: Ana 3 finds, 1 round won; Ben 3 finds, 1 round won
+[+10398 ms] [bot] 17:51:16.291 taunt: Ben ตามทันแล้ว! · Ben ties it up!
+[+10398 ms] [bot] 17:51:16.291 claim 31dfe2a7-3709-471c-ab9f-4e846768a695:0 -> ok (r11)
+[+10440 ms] [ana] find.claim :0 -> taken
+[+10440 ms] PASS Ana circling Ben's find is answered taken
+[+13426 ms] [ana] taunt r12: Ben ขึ้นนำแล้ว! · Ben is out front!
+[+13426 ms] [bot] 17:51:19.319 snapshot r12: live 31dfe2a7, 3 of 5 found (Ben 2, Ana 1). league: Ana 3 finds, 1 round won; Ben 4 finds, 1 round won
+[+13426 ms] [bot] 17:51:19.319 taunt: Ben ขึ้นนำแล้ว! · Ben is out front!
+[+13426 ms] [bot] 17:51:19.319 claim 31dfe2a7-3709-471c-ab9f-4e846768a695:1 -> ok (r12)
+[+13472 ms] [ana] taunt r13: Ana เท่ากันแล้ว! · Ana is level now!
+[+13473 ms] [bot] 17:51:19.365 snapshot r13: live 31dfe2a7, 4 of 5 found (Ben 2, Ana 2). league: Ana 4 finds, 1 round won; Ben 4 finds, 1 round won
+[+13473 ms] [bot] 17:51:19.365 taunt: Ana เท่ากันแล้ว! · Ana is level now!
+[+13473 ms] [ana] find.claim :3 -> ok
+[+13515 ms] [ana] taunt r14: Ben ไปต่อไหม? · Go again, Ben?
+[+13515 ms] [ana] find.claim :2 -> ok
+[+13515 ms] [bot] 17:51:19.408 snapshot r14: ended (all-found) 31dfe2a7, 5 of 5 found (Ana 3, Ben 2). league: Ana 5 finds, 2 rounds won; Ben 4 finds, 1 round won
+[+13515 ms] [bot] 17:51:19.408 taunt: Ben ไปต่อไหม? · Go again, Ben?
+[+13515 ms] [bot] 17:51:19.408 2 rounds ended; leaving the room
+[+13818 ms] PASS round 2: a taunt names Ana tying it up
+[+13818 ms] PASS round 2 ends on a rematch nudge for Ben: Ben ไปต่อไหม? · Go again, Ben?
+[+13818 ms] PASS Ana's win is counted: {"Ana":2,"Ben":1}
+[+13818 ms] PASS the test bot left on its own after 2 rounds (exit 0)
+[+13818 ms] ALL PASS
