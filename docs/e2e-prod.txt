@@ -1,0 +1,43 @@
+Two-client core round against the deployed Worker, 2026-10-17.
+Worker its-in-there-room, version 828db116-198a-4f60-af8d-a83da4fded87.
+Command: node /tmp/iit-e2e/e2e-prod.mjs <worktree> https://its-in-there-room.mingrath.workers.dev (exit 0)
+The league fill and online-cap steps of e2e.mjs were left out, because their 256 scoreboard entries never free in a production room.
+
+[+   1 ms] backend https://its-in-there-room.mingrath.workers.dev, node v26.12.0, protocol v1
+[+   1 ms] joinToken c6fb89703c2d…, roomId = deriveRoomId(joinToken) = 2e406a5a8012d62202f08dd2aa042d70611845a1608ab652fc82b952a337b481
+[+ 824 ms] Ana <- snapshot r1: no round, difficulty 1, nextDifficulty 1, league [Ana 0]
+[+ 947 ms] Ana <- snapshot r2: no round, difficulty 1, nextDifficulty 1, league [Ana 0, Ben 0]
+[+ 947 ms] Ben <- snapshot r2: no round, difficulty 1, nextDifficulty 1, league [Ana 0, Ben 0]
+[+ 947 ms] PASS both hellos admitted with the token-derived room id
+[+ 947 ms] Ana -> round.start (ana-0)
+[+1010 ms] Ben <- snapshot r3: live b087dccc finds 0/3, difficulty 1, nextDifficulty 1, league [Ana 0, Ben 0]
+[+1010 ms] Ana <- snapshot r3: live b087dccc finds 0/3, difficulty 1, nextDifficulty 1, league [Ana 0, Ben 0]
+[+1010 ms] Ana <- result round.start ana-0 -> ok (r3)
+[+1010 ms] PASS round.start answered ok
+[+1010 ms] PASS both players see live round b087dccc with 3 targets
+[+1010 ms] PASS level 1 plays 3 targets
+[+1010 ms] Ana -> find.claim b087dccc-849f-4d15-8901-afabf3ea63eb:0 (ana-1)
+[+1057 ms] Ana <- snapshot r4: live b087dccc finds 1/3, difficulty 1, nextDifficulty 1, league [Ana 1, Ben 0]
+[+1057 ms] Ana <- result find.claim ana-1 -> ok (r4)
+[+1057 ms] PASS Ana claims b087dccc-849f-4d15-8901-afabf3ea63eb:0: ok
+[+1057 ms] Ben -> find.claim b087dccc-849f-4d15-8901-afabf3ea63eb:0 (ben-0)
+[+1057 ms] Ben <- snapshot r4: live b087dccc finds 1/3, difficulty 1, nextDifficulty 1, league [Ana 1, Ben 0]
+[+1100 ms] Ben <- result find.claim ben-0 -> taken (r4)
+[+1100 ms] PASS Ben claims b087dccc-849f-4d15-8901-afabf3ea63eb:0: taken
+[+1100 ms] Ben -> find.claim b087dccc-849f-4d15-8901-afabf3ea63eb:1 (ben-1)
+[+1147 ms] Ana <- snapshot r5: live b087dccc finds 2/3, difficulty 1, nextDifficulty 1, league [Ana 1, Ben 1]
+[+1147 ms] Ben <- snapshot r5: live b087dccc finds 2/3, difficulty 1, nextDifficulty 1, league [Ana 1, Ben 1]
+[+1147 ms] Ben <- result find.claim ben-1 -> ok (r5)
+[+1147 ms] PASS Ben claims b087dccc-849f-4d15-8901-afabf3ea63eb:1: ok
+[+1147 ms] Ana -> find.claim b087dccc-849f-4d15-8901-afabf3ea63eb:2 (ana-2)
+[+1191 ms] Ana <- snapshot r6: ended b087dccc finds 3/3 all-found, difficulty 1, nextDifficulty 2, league [Ana 2, Ben 1]
+[+1191 ms] Ben <- snapshot r6: ended b087dccc finds 3/3 all-found, difficulty 1, nextDifficulty 2, league [Ana 2, Ben 1]
+[+1191 ms] Ana <- result find.claim ana-2 -> ok (r6)
+[+1192 ms] PASS Ana claims b087dccc-849f-4d15-8901-afabf3ea63eb:2: ok
+[+1192 ms] PASS room.difficulty stays the level just played, 1
+[+1192 ms] PASS room.nextDifficulty is 2 after all-found
+[+1192 ms] Ben -> find.claim b087dccc-849f-4d15-8901-afabf3ea63eb:0 (ben-2)
+[+1234 ms] Ben <- result find.claim ben-2 -> not-live (r6)
+[+1235 ms] PASS a claim after all-found answers not-live
+[+1235 ms] Ana and Ben closed
+[+1236 ms] done
