@@ -12,13 +12,31 @@ export const BANNER_TOP = 72;
 
 type BannerTarget = { label: string; labelTh?: string; foundColor: string | null };
 
-/** `nextLevel` is the room's nextDifficulty: the level the next round plays at. */
-export type BannerModel = { nextLevel: number; league: { name: string; finds: number }[] } & (
+/**
+ * One player on the scoreboard, best first. `finds` counts this round only; `roundsWon` counts every round in the room.
+ * `leader` is true on at most one row, and only when that player is strictly ahead. Names arrive full length.
+ */
+export type ScoreRow = { name: string; color: string; finds: number; roundsWon: number; leader: boolean; self: boolean };
+
+/** A rival found the target you just circled. The driver clears it after a couple of seconds. */
+export type GotFirst = { name: string; color: string };
+
+/** Who won the round that ended. `score` is every scoreboard row's finds, best first. "plain" keeps the old headline. */
+export type RoundVerdict =
+    | { kind: "win"; name: string; color: string; self: boolean; score: number[] }
+    | { kind: "tie"; score: number[] }
+    | { kind: "plain" };
+
+/**
+ * `nextLevel` is the room's nextDifficulty: the level the next round plays at. `scoreboard` holds every row the
+ * driver knows; the banner draws it only with 2 or more rows.
+ */
+export type BannerModel = { nextLevel: number; scoreboard: ScoreRow[]; gotFirst: GotFirst | null } & (
     | { phase: "connecting" }
     | { phase: "idle"; frameProblem: boolean }
     | { phase: "hiding" }
     | { phase: "live"; secondsLeft: number; targets: BannerTarget[]; taunt: string | null }
-    | { phase: "ended"; reason: EndReason; targets: BannerTarget[]; taunt: string | null; frameProblem: boolean }
+    | { phase: "ended"; reason: EndReason; targets: BannerTarget[]; taunt: string | null; frameProblem: boolean; verdict: RoundVerdict }
     | { phase: "full" }
 );
 
@@ -104,8 +122,8 @@ export function bannerSchema(model: BannerModel, styling: ModuleStyling): DomEle
             break;
         }
     }
-    if (model.league.length > 1) {
-        body.push(text(model.league.map((e) => `${e.name} ${e.finds}`).join(" · "), 11, styling.mutedForeground));
+    if (model.scoreboard.length > 1) {
+        body.push(text(model.scoreboard.map((e) => `${e.name} ${e.finds}`).join(" · "), 11, styling.mutedForeground));
     }
 
     return {

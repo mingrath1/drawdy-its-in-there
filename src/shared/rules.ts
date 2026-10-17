@@ -10,6 +10,7 @@
 
 import type { BoardSnapshot, Find, LeagueEntry, PlantRequest, PlayerId, Room, Round, Target } from "./hunt.ts";
 import { plant } from "./placement.ts";
+import { roundOutcome } from "./standings.ts";
 import {
     type Command,
     MAX_DIFFICULTY,
@@ -210,20 +211,14 @@ function credit(league: LeagueEntry[], find: Find): LeagueEntry[] {
 /** Ends a round. Everyone tied for the most finds wins it, unless it was cancelled or nobody found anything. */
 function finish(room: Room, round: Round, endedAt: number, reason: EndReason): Room {
     const ended = must(endRound(round, endedAt, reason));
-    const winners = topFinders(ended.status === "ended" && reason !== "cancelled" ? ended.finds : []);
+    const outcome = roundOutcome(ended.status === "ended" && reason !== "cancelled" ? ended.finds : []);
+    const winners = new Set(outcome.winners.map((w) => w.playerId));
     return {
         ...room,
         current: ended,
         roundsPlayed: room.roundsPlayed + (reason === "cancelled" ? 0 : 1),
         league: room.league.map((e) => (winners.has(e.playerId) ? { ...e, roundsWon: e.roundsWon + 1 } : e)),
     };
-}
-
-function topFinders(finds: Find[]): Set<PlayerId> {
-    const counts = new Map<PlayerId, number>();
-    for (const find of finds) counts.set(find.playerId, (counts.get(find.playerId) ?? 0) + 1);
-    const best = Math.max(0, ...counts.values());
-    return new Set([...counts].filter(([, count]) => best > 0 && count === best).map(([playerId]) => playerId));
 }
 
 function must(result: RoundResult): Round {

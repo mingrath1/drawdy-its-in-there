@@ -31,15 +31,22 @@ const targets = [
     { label: "cat face", labelTh: "หน้าแมว", foundColor: "#ff4d4d" },
     { label: "229", foundColor: null },
 ];
-const base = { nextLevel: 3, league: [{ name: "Ana", finds: 3 }, { name: "Ben", finds: 1 }] };
+const base = {
+    nextLevel: 3,
+    scoreboard: [
+        { name: "Ana", color: "#e11d48", finds: 3, roundsWon: 2, leader: true, self: true },
+        { name: "Ben", color: "#2563eb", finds: 1, roundsWon: 0, leader: false, self: false },
+    ],
+    gotFirst: null,
+};
 const models: BannerModel[] = [
     { ...base, phase: "connecting" },
     { ...base, phase: "idle", frameProblem: false },
     { ...base, phase: "hiding" },
     { ...base, phase: "live", secondsLeft: 42.2, targets, taunt: "It's in there. Somewhere." },
-    { ...base, phase: "ended", reason: "all-found", targets, taunt: null, frameProblem: false },
-    { ...base, phase: "ended", reason: "time-up", targets, taunt: "หมดเวลา!", frameProblem: true },
-    { nextLevel: 1, league: [], phase: "full" },
+    { ...base, phase: "ended", reason: "all-found", targets, taunt: null, frameProblem: false, verdict: { kind: "plain" } },
+    { ...base, phase: "ended", reason: "time-up", targets, taunt: "หมดเวลา!", frameProblem: true, verdict: { kind: "plain" } },
+    { nextLevel: 1, scoreboard: [], gotFirst: null, phase: "full" },
     { ...base, phase: "idle", frameProblem: true },
 ];
 

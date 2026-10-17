@@ -706,11 +706,12 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
     function bannerModel(h: Hunt): BannerModel {
         const s = h.snapshot;
         const nextLevel = s?.room.nextDifficulty ?? 1;
-        const league = (s?.room.league ?? []).map((e) => ({ name: e.playerName, finds: e.finds }));
+        const scoreboard = (s?.room.league ?? []).map((e) => ({ name: e.playerName, color: "", finds: e.finds, roundsWon: e.roundsWon, leader: false, self: e.playerId === s?.self }));
+        const gotFirst = null;
         const round = s?.room.current ?? null;
-        if (!s) return { nextLevel, league, phase: "connecting" };
-        if (!round) return { nextLevel, league, phase: "idle", frameProblem: h.frameProblem };
-        if (round.status === "planting" || round.status === "ready") return { nextLevel, league, phase: "hiding" };
+        if (!s) return { nextLevel, scoreboard, gotFirst, phase: "connecting" };
+        if (!round) return { nextLevel, scoreboard, gotFirst, phase: "idle", frameProblem: h.frameProblem };
+        if (round.status === "planting" || round.status === "ready") return { nextLevel, scoreboard, gotFirst, phase: "hiding" };
         const targets = round.targets.map((t) => {
             const stamp = stamps.get(t.stampId);
             const find = round.finds.find((f) => f.targetId === t.id);
@@ -718,9 +719,9 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         });
         if (round.status === "live") {
             const secondsLeft = (round.endsAt - (Date.now() + h.clockSkew)) / 1000;
-            return { nextLevel, league, phase: "live", secondsLeft, targets, taunt: h.taunt };
+            return { nextLevel, scoreboard, gotFirst, phase: "live", secondsLeft, targets, taunt: h.taunt };
         }
-        return { nextLevel, league, phase: "ended", reason: round.reason, targets, taunt: h.taunt, frameProblem: h.frameProblem };
+        return { nextLevel, scoreboard, gotFirst, phase: "ended", reason: round.reason, targets, taunt: h.taunt, frameProblem: h.frameProblem, verdict: { kind: "plain" } };
     }
 
     async function renderBanner(h: Hunt) {
@@ -751,7 +752,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
     }
 
     async function showNotice(position: { x: number; y: number }, notice: "full") {
-        const schema = bannerSchema({ nextLevel: 1, league: [], phase: notice }, ctx.styling);
+        const schema = bannerSchema({ nextLevel: 1, scoreboard: [], gotFirst: null, phase: notice }, ctx.styling);
         await send({ type: "command:dom:upsert-floating-element", req: { domId: BANNER_ID, position, schema, asPopover: false } });
         // A hunt started since owns the banner by then.
         setTimeout(
