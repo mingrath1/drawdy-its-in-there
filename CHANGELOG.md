@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0
+
+Racing each other.
+
+- A scoreboard on the banner, with two or more players: each player's colour, finds this round, and rounds won. A crown marks the player strictly ahead.
+- "Got it first": circle a target someone else already found, or lose a claim by a moment, and the banner names who beat you, in their colour.
+- The round's end names the winner with the score, or calls a tie.
+- The host's taunts name players when the lead changes, and nudge the last-place player for a rematch. Playing alone keeps the plain lines.
+- After a dropped connection, the banner no longer keeps a taunt that the room has moved past.
+- A found ring whose write failed is retried after you leave and rejoin the frame, and one failed ring no longer holds back the others.
+- `scripts/bot-player.mjs`, a test bot that plays as a second player, and `scripts/race-check.mjs`, a two-player check against a backend.
+
 ## 0.1.0
 
 The first release.

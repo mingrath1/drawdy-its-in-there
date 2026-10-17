@@ -26,6 +26,17 @@ Every round you clear raises the level, up to level 4. A round that times out st
 
 The banner and the taunts are in Thai and English. Click the magnifier again with a hunt frame in view to rejoin that frame.
 
+### Racing each other
+
+With two or more players in a round, the banner keeps score:
+
+- **Scoreboard.** One row per player on the board in this room, plus anyone who found something this round. Each row shows the player's colour, their finds this round, and their rounds won (🏆). A 👑 marks the player who is strictly ahead. A tie has no crown.
+- **Got it first.** Circle a target someone else already found, or lose a claim by a moment, and the banner says "Ben เจอก่อน · Ben got it first" in their colour for a couple of seconds.
+- **Round winner.** When a round ends, the banner names the winner with the score, such as "🏆 Ben wins the round! 2–1", or calls a tie.
+- **Named taunts.** The room calls out a change of lead ("Ben takes the lead!", "Ana ties it up!") and nudges the last-place player for a rematch. Playing alone keeps the plain lines.
+
+Everyone tied for the most finds wins the round. A round played alone counts as a win when you found something. A cancelled round has no winner.
+
 ## Install
 
 ### On a local board, from source
@@ -117,10 +128,18 @@ cd server && npm test
 The repository has three parts:
 
 - `src/driver/` is the Drawdy driver. `hunt.ts` handles the button, the banner, the targets, and laser judging. `local-host.ts` is the offline room, and `remote-host.ts` talks to the backend over a WebSocket. `config.ts` holds `BACKEND_URL`.
-- `src/shared/` holds the game itself. `rules.ts` is the game as a pure reducer. `placement.ts` hides the targets, `judge.ts` decides whether a laser stroke found one, and `protocol.ts` defines the messages between driver and room.
+- `src/shared/` holds the game itself. `rules.ts` is the game as a pure reducer. `placement.ts` hides the targets, `judge.ts` decides whether a laser stroke found one, `standings.ts` decides who leads and who won a round, `taunts.ts` picks the host's lines, and `protocol.ts` defines the messages between driver and room.
 - `server/` is the Worker and the `Room` Durable Object in `server/src/room.ts`.
 
 The rules run in both places from one copy. `LocalHost` and the `Room` Durable Object both import `src/shared/rules.ts`, so offline play and online play follow the same rules. Drawdy bundles `src/index.ts` with esbuild and allows no npm imports, so the shared code has no dependencies.
+
+To race yourself on one machine, run the test bot as a second player. Two tabs of one Drawdy user count as one player, so a rival needs its own connection. The bot joins a hunt frame's room by its join token and claims targets on a timer. It never starts or cancels a round.
+
+```bash
+node scripts/bot-player.mjs --token <the frame's 64-hex join token> --name Ben --first 10 --every 12 --max 2
+```
+
+`scripts/race-check.mjs` plays two rounds between a scripted player and the bot against a backend and checks the named taunts, the winner, and rounds won. Its last runs are in `docs/e2e-compete-local.txt` and `docs/e2e-compete-prod.txt`.
 
 `docs/design/` holds the protocol design arena. `gpt.md`, `grok.md`, `gemini.md`, and `muse.md` are four proposals, and `JUDGE.md` compares them. The top comment in `src/shared/protocol.ts` says which parts each one contributed. `docs/FACTS.md` lists the platform facts the design relies on.
 
