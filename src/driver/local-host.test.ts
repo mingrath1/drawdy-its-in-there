@@ -144,6 +144,35 @@ describe("local host", () => {
         assert.equal(t.live().targets.length, targetCount(2));
     });
 
+    it("keeps the round's taunt on a commit without one, so a reconnect still gets it", async () => {
+        const t = setup();
+        await t.open();
+        t.send({ type: "round.start", board: BOARD });
+        const started = t.snapshots().at(-1)!;
+        assert.ok(started.taunt);
+        t.send({ type: "board.offer", afterRoundId: t.live().id, board: BOARD });
+        assert.equal(t.snapshots().at(-1)!.revision, started.revision + 1);
+        assert.equal(t.snapshots().at(-1)!.taunt, started.taunt, "the pre-plant keeps the start line");
+        await t.open();
+        assert.equal(t.snapshots().at(-1)!.taunt, started.taunt, "and so does a reconnect after it");
+    });
+
+    it("keeps an ended round's taunt until the next round starts with its own", async () => {
+        const t = setup();
+        await t.open();
+        t.send({ type: "round.start", board: BOARD });
+        const round = t.live();
+        for (const target of round.targets) t.send({ type: "find.claim", roundId: round.id, targetId: target.id });
+        const ended = t.snapshots().at(-1)!;
+        assert.ok(ended.taunt);
+        t.send({ type: "difficulty.set", value: 3 });
+        assert.equal(t.snapshots().at(-1)!.revision, ended.revision + 1);
+        assert.equal(t.snapshots().at(-1)!.taunt, ended.taunt, "a level change between rounds keeps the end line");
+        t.send({ type: "round.start", board: BOARD });
+        assert.ok(t.snapshots().at(-1)!.taunt);
+        assert.notEqual(t.snapshots().at(-1)!.taunt, ended.taunt, "the next round's start replaces it");
+    });
+
     it("lets the difficulty change only between rounds", async () => {
         const t = setup();
         await t.open();

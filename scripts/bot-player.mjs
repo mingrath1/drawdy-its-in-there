@@ -111,9 +111,9 @@ export function endsSeenRound(seen, round) {
 /** The bot leaves once its --rounds rounds have ended and its last claim is answered, so that answer still gets logged. */
 export const mayLeave = (rounds, roundsEnded, pendingClaims) => rounds !== null && roundsEnded >= rounds && pendingClaims === 0;
 
-/** The snapshot's taunt, when its publication is newer than the last taunt logged. */
-export const newTaunt = (snapshot, lastRevision) =>
-    snapshot.taunt !== null && snapshot.revision > lastRevision ? snapshot.taunt : null;
+/** The snapshot's taunt, when it differs from the last taunt logged. Every snapshot repeats its round's latest line. */
+export const newTaunt = (snapshot, lastTaunt) =>
+    snapshot.taunt !== null && snapshot.taunt !== lastTaunt ? snapshot.taunt : null;
 
 const roundText = (round) => {
     if (round === null) return "no round yet";
@@ -158,7 +158,7 @@ export function play(options) {
         let progress = { roundId: null, sent: 0, claimed: new Set() };
         let timer = null;
         let seq = 0;
-        let tauntRevision = 0;
+        let lastTaunt = null;
         let roundsEnded = 0;
         const pending = new Map(); // requestId -> targetId, until its result arrives
         const seen = new Map();
@@ -210,9 +210,9 @@ export function play(options) {
             const round = snapshot.room.current;
             if (round !== null && round.id !== progress.roundId) progress = { roundId: round.id, sent: 0, claimed: new Set() };
             say(describeSnapshot(snapshot));
-            const taunt = newTaunt(snapshot, tauntRevision);
+            const taunt = newTaunt(snapshot, lastTaunt);
             if (taunt !== null) {
-                tauntRevision = snapshot.revision;
+                lastTaunt = taunt;
                 say(`taunt: ${taunt}`);
             }
             if (endsSeenRound(seen, round)) roundsEnded++;

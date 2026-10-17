@@ -530,6 +530,39 @@ describe("snapshots", () => {
     expect(first).toMatchObject({ revision: found.revision, taunt: found.taunt });
     again.close();
   });
+
+  it("keeps the round's taunt on a commit without one, as a player joining mid-round", async () => {
+    const keys = roomKeys();
+    const { client: a } = await joined(keys, alice);
+    const result = await command(a, { type: "round.start", board });
+    const started = await a.waitFor(snapshotWhere((_room, snapshot) => snapshot.revision === result.revision));
+    expect(started.taunt).toEqual(expect.any(String));
+
+    const { client: b, first } = await joined(keys, bob);
+    expect(first).toMatchObject({ revision: started.revision + 1, taunt: started.taunt });
+    a.close();
+    b.close();
+  });
+
+  it("gives a reconnect the round's start taunt after a pre-plant committed twice without one", async () => {
+    const keys = roomKeys();
+    const { client: a } = await joined(keys, alice);
+    const { client: b } = await joined(keys, bob);
+    const result = await command(a, { type: "round.start", board });
+    const started = await a.waitFor(snapshotWhere((_room, snapshot) => snapshot.revision === result.revision));
+    expect(started.taunt).toEqual(expect.any(String));
+    b.close();
+
+    const round = started.room.current!;
+    expect((await command(a, { type: "board.offer", afterRoundId: round.id, board })).code).toBe("ok");
+    const ready = await a.waitFor(snapshotWhere((room) => room.next?.status === "ready"));
+    expect(ready.revision).toBe(started.revision + 2);
+
+    const { client: again, first } = await joined(keys, bob);
+    expect(first).toMatchObject({ revision: ready.revision, taunt: started.taunt });
+    a.close();
+    again.close();
+  });
 });
 
 describe("wire safety", () => {

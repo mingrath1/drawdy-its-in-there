@@ -18,7 +18,7 @@ import { plantFinished } from "../../src/shared/rules.ts";
 const rebase = (_value: unknown, _ops: unknown, { deltasSinceBase }: CheckpointInfo): boolean =>
   deltasSinceBase >= 64;
 
-/** `revision` orders snapshots; `taunt` is the line for the change that produced this revision. */
+/** `revision` orders snapshots; `taunt` is the current round's latest line, so a reconnect still gets it. */
 export type OpenRoom = { revision: number; taunt: string | null; room: Room };
 
 /** Version 1 kept the next round's level in `difficulty`, up to 10, and a hash of the join token. */
@@ -60,14 +60,15 @@ export const HuntReceipts = defineDocFamily<{ receipts: Receipt[] }, null>({
 export const plain = <T>(value: Draft<T> | Readonly<T>): T => JSON.parse(JSON.stringify(value));
 
 /**
- * Commits a new room state: one revision per public change, carrying that change's taunt. Returns whether it
- * changed anything, since only then does the commit broadcast a snapshot.
+ * Commits a new room state: one revision per public change. A change with a taunt replaces the stored one; a change
+ * without one keeps it within the same round and clears it in a new one. Returns whether it changed anything, since
+ * only then does the commit broadcast a snapshot.
  */
 export function publish(open: Draft<OpenRoom>, before: Room, after: Room, taunt: string | null): boolean {
   if (after === before) return false;
   open.room = after;
   open.revision += 1;
-  open.taunt = taunt;
+  if (taunt !== null || after.current?.id !== before.current?.id) open.taunt = taunt;
   return true;
 }
 

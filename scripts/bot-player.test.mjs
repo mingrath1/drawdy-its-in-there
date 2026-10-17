@@ -247,9 +247,10 @@ test("the bot leaves once its rounds have ended and its last claim is answered",
     assert.equal(mayLeave(1, 1, 0), true);
 });
 
-test("newTaunt reports a taunt once, when its publication is newer than the last one logged", () => {
+test("newTaunt reports a taunt once, when it differs from the last one logged", () => {
     const snap = (revision, taunt) => ({ revision, taunt });
-    assert.equal(newTaunt(snap(12, null), 11), null);
-    assert.equal(newTaunt(snap(12, "Spotted!"), 11), "Spotted!");
-    assert.equal(newTaunt(snap(12, "Spotted!"), 12), null);
+    assert.equal(newTaunt(snap(12, null), "Spotted!"), null);
+    assert.equal(newTaunt(snap(12, "Spotted!"), null), "Spotted!");
+    assert.equal(newTaunt(snap(13, "Spotted!"), "Spotted!"), null, "a later snapshot of the round repeats its line");
+    assert.equal(newTaunt(snap(14, "Ben takes the lead!"), "Spotted!"), "Ben takes the lead!");
 });

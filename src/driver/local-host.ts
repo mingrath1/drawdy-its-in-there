@@ -44,13 +44,17 @@ export function createLocalHost(options: LocalHostOptions): HuntHost {
         });
     };
 
-    /** Commits a new room state, like the Room's publish: a new revision and the taunt for that moment. */
+    /**
+     * Commits a new room state, like the Room's publish: a new revision, and the taunt for that moment, or else the
+     * round's latest one while the round stays the same.
+     */
     const commit = (next: Room): boolean => {
         if (!room || next === room) return false;
         const moment = momentOf(room, next);
+        if (moment) taunt = bundledTaunts(moment);
+        else if (next.current?.id !== room.current?.id) taunt = null;
         room = next;
         revision++;
-        taunt = moment ? bundledTaunts(moment) : null;
         armDeadline();
         return true;
     };
