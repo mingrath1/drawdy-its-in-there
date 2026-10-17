@@ -1377,4 +1377,19 @@ describe("driver", () => {
         await t.flush();
         assert.deepEqual(markers(t.drawdy).map((m) => [m.meta.iitFound, m.frameId]), [["round-7:t2", "hunt-1"]], "the first frame still writes it");
     });
+
+    it("still writes our other markers on a snapshot where one marker's write fails", async () => {
+        const t = setup();
+        t.failOnce((r) => r.type === "command:scene:add-drawdy-elements");
+        const room = await joinRemote(t, ended(live("round-1"), "time-up", [findBy(0)]));
+        assert.equal(markers(t.drawdy).length, 0);
+        t.failOnce((r) => r.type === "command:scene:add-drawdy-elements");
+        room.snapshot(live("round-2", undefined, [findBy(1)]));
+        await t.flush();
+        assert.deepEqual(markers(t.drawdy).map((m) => m.meta.iitFound), ["round-1:t0"], "the ended round's marker is written past the failed one");
+        assert.ok(warnings.some((w) => w.join(" ").includes("round-2:t1")), "the failure names its marker");
+        room.snapshot(live("round-2", undefined, [findBy(1)]));
+        await t.flush();
+        assert.deepEqual(markers(t.drawdy).map((m) => m.meta.iitFound).sort(), ["round-1:t0", "round-2:t1"]);
+    });
 });

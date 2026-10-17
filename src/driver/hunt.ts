@@ -690,10 +690,10 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             return;
         }
         const { drawdyElements } = await send({ type: "command:scene:query-rect", req: { rect, properties: ["meta"] } });
+        // Each mark on its own, so one failed write does not hold back the rest until the next snapshot.
         for (const mark of due) {
             const copies = taggedIds(drawdyElements, mark.tag);
-            if (copies.length === 0) await writeMarker(h, rect, mark);
-            else await keepOne(mark.tag, copies);
+            await quietly(`writing marker ${mark.tag}`, copies.length === 0 ? writeMarker(h, rect, mark) : keepOne(mark.tag, copies));
         }
     }
 
