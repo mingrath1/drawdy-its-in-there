@@ -108,8 +108,6 @@ type Hunt = {
     strokes: Set<string> | null;
     /** find.claim requests in flight, so a target is not claimed twice while the room decides. */
     claims: Map<string, { roundId: string; targetId: string }>;
-    /** The last round seen ending, so a marker for a find in it is still written after the next round starts. */
-    lastEnded: Extract<WireRound, { status: "ended" }> | null;
     banner: { x: number; y: number } | null;
     subscriptions: string[];
     toolToRestore: string | null;
@@ -123,6 +121,11 @@ const stamps = new Map<string, PackStamp>(STAMP_PACK.map((s) => [s.id, s]));
 export function createHuntDriver(ctx: DriverContext): HuntDriver {
     const { send } = ctx;
     const localRooms = new Map<string, HuntHost>();
+    /**
+     * The last round seen ending in each hunt frame, by frame id, so a marker for a find in it is still
+     * written after the next round starts, even by a hunt that left the frame and joined it again.
+     */
+    const lastEnded = new Map<string, Extract<WireRound, { status: "ended" }>>();
     const guestId = `guest-${Math.random().toString(36).slice(2, 10)}`;
     let hunt: Hunt | null = null;
     let queue: Promise<void> = Promise.resolve();
@@ -187,7 +190,6 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             round: null,
             strokes: null,
             claims: new Map(),
-            lastEnded: null,
             banner,
             subscriptions: [],
             toolToRestore: null,
@@ -361,7 +363,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             `snapshot r${message.revision}: ${current ? `${current.status} ${current.id}` : "no round"}, level ${message.room.difficulty}, next ${message.room.nextDifficulty}`
         );
         await renderRound(h, current);
-        if (current?.status === "ended") h.lastEnded = current;
+        if (current?.status === "ended") lastEnded.set(h.frameId, current);
         const view = h.round;
         if (view) for (const [targetId, state] of view.beaten) if (state === "waiting") beatenTo(h, view, targetId);
         await quietly("writing found markers", markFinds(h, message));
@@ -672,7 +674,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
      * of ours wrote heals on the next one.
      */
     async function markFinds(h: Hunt, snapshot: Snapshot) {
-        const rounds = [snapshot.room.current, h.lastEnded].filter(
+        const rounds = [snapshot.room.current, lastEnded.get(h.frameId)].filter(
             (r, i, all): r is Played => (r?.status === "live" || r?.status === "ended") && all.findIndex((o) => o?.id === r.id) === i
         );
         const due: Mark[] = rounds.flatMap((round) =>

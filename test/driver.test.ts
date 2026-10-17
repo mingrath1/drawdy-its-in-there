@@ -1301,4 +1301,80 @@ describe("driver", () => {
         assert.equal(t.drawdy.commands.length, issued, "nothing runs after leaving");
         assert.deepEqual(warnings, []);
     });
+
+    /** A snapshot on one room socket, for tests that leave and click the action button again. */
+    const deliverSnapshot = (socket: FakeSocket, revision: number, current: unknown, roomId = "room-remote") =>
+        socket.deliver({
+            v: 1,
+            type: "snapshot",
+            revision,
+            serverNow: Date.now(),
+            self: "u-ana",
+            room: { roomId, difficulty: 1, nextDifficulty: 1, league: LEAGUE, current, next: null, roundsPlayed: 4 },
+            taunt: null,
+        });
+
+    /** Leaves the hunt, clicks the action button, and answers the new room socket's hello. */
+    async function rejoin(t: ReturnType<typeof setup>) {
+        t.drawdy.click(t.onEvent, STOP_BUTTON_ID);
+        await t.flush();
+        const before = sockets.length;
+        t.drawdy.click(t.onEvent, ACTION);
+        await pump(() => sockets.length > before);
+        assert.ok(sockets.length > before, "the action button opened a new room socket");
+        const socket = sockets[sockets.length - 1];
+        socket.accept();
+        assert.equal((socket.sent[0] as { type?: string } | undefined)?.type, "hello", "and it said hello");
+        return socket;
+    }
+
+    /** Ben finds t0 and t1, and our find of t2 ends round-7 all found, but the write of its marker fails. */
+    async function failedMarkerAtEnd(t: ReturnType<typeof setup>) {
+        const room = await joinRemote(t, live("round-7", undefined, [ben(0), ben(1)]), 1, LEAGUE);
+        laser(t, [circleTarget(0)]);
+        await t.flush();
+        laser(t, [circleTarget(0), circleTarget(2)]);
+        await t.flush();
+        t.failOnce((r) => r.type === "command:scene:add-drawdy-elements");
+        assert.equal(room.answer("ok"), "t2");
+        room.snapshot(ended(live("round-7"), "all-found", [ben(0), ben(1), findBy(2)]));
+        await t.flush();
+        assert.deepEqual(markers(t.drawdy), [], "the write at the ended snapshot failed");
+        return room;
+    }
+
+    it("writes the marker of a find that ended the round, when its write failed, once the next round goes live", async () => {
+        const t = setup();
+        const room = await failedMarkerAtEnd(t);
+        room.snapshot(live("round-8"));
+        await t.flush();
+        assert.deepEqual(markers(t.drawdy).map((m) => m.meta.iitFound), ["round-7:t2"]);
+    });
+
+    it("writes the last ended round's failed marker after leaving and rejoining the frame during the next round", async () => {
+        const t = setup();
+        await failedMarkerAtEnd(t);
+        deliverSnapshot(await rejoin(t), 1, live("round-8"));
+        await t.flush();
+        assert.deepEqual(markers(t.drawdy).map((m) => m.meta.iitFound), ["round-7:t2"]);
+    });
+
+    it("keeps the last ended round to its own frame when a hunt moves to another frame and back", async () => {
+        const t = setup();
+        await failedMarkerAtEnd(t);
+        const otherMeta = { ...REMOTE_META, roomId: "room-other", joinToken: "cd".repeat(32) };
+        t.drawdy.add({ id: "hunt-2", type: "frame", x: 1300, y: 100, width: 1000, height: 700, meta: { iit: otherMeta } });
+        t.drawdy.selection = ["hunt-2"];
+        const other = await rejoin(t);
+        assert.equal(other.url, "wss://iit.example.workers.dev/rooms/room-other");
+        deliverSnapshot(other, 1, live("round-8"), "room-other");
+        await t.flush();
+        assert.deepEqual(markers(t.drawdy), [], "the other frame writes no marker for the first frame's round");
+
+        t.drawdy.selection = ["hunt-1"];
+        const back = await rejoin(t);
+        deliverSnapshot(back, 1, live("round-8"));
+        await t.flush();
+        assert.deepEqual(markers(t.drawdy).map((m) => [m.meta.iitFound, m.frameId]), [["round-7:t2", "hunt-1"]], "the first frame still writes it");
+    });
 });
