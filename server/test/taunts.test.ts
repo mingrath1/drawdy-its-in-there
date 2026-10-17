@@ -36,7 +36,7 @@ describe("taunts", () => {
 
   it("names the moment a commit produced, a round's end outranking its last find", () => {
     expect(momentOf(room(null), live)).toEqual({ kind: "round-start", roundId: "r1" });
-    expect(momentOf(live, found)).toEqual({ kind: "find", roundId: "r1", find });
+    expect(momentOf(live, found)).toEqual({ kind: "find", roundId: "r1", find, lead: null });
     expect(momentOf(live, ended)).toMatchObject({ kind: "round-end", reason: "all-found", found: 1, total: 1 });
     expect(momentOf(found, found)).toBeNull();
     expect(momentOf(ended, ended)).toBeNull();
