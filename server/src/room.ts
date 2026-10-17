@@ -287,7 +287,7 @@ export class Room extends DurableObject<Env> {
 
     // A replayed result carries its original revision, so the current state goes beside it, by broadcast or here.
     if (outcome.kind === "replayed" && !outcome.published) {
-      this.#send(socket, snapshot(outcome.open, player.playerId, null));
+      this.#send(socket, snapshot(outcome.open, player.playerId, outcome.open.taunt));
     }
     this.#send(socket, {
       v: PROTOCOL_VERSION,

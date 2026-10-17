@@ -500,6 +500,22 @@ describe("snapshots", () => {
     client.close();
   });
 
+  it("gives a replayed command whose commit published nothing the taunt of the latest revision", async () => {
+    const { client } = await joined(roomKeys(), alice);
+    const round = await startLive(client);
+    const result = await claim(client, round, round.targets[0]!.id, "first-claim");
+    expect(result.code).toBe("ok");
+    const found = await client.waitFor(snapshotWhere((_room, snapshot) => snapshot.revision === result.revision));
+    expect(found.taunt).toEqual(expect.any(String));
+
+    const from = client.received.length;
+    expect((await claim(client, round, round.targets[0]!.id, "first-claim")).code).toBe("ok");
+    const sent = snapshotsIn(client.received.slice(from));
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ revision: found.revision, taunt: found.taunt });
+    client.close();
+  });
+
   it("gives a reconnect whose hello changes nothing the taunt of the latest revision", async () => {
     const keys = roomKeys();
     const { client: a } = await joined(keys, alice);
