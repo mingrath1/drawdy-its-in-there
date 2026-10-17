@@ -1,0 +1,77 @@
+Local run of the test bot against a local Worker. Not production: nothing here touches the deployed Worker.
+
+Setup, 2026-10-17, branch iit-bot, Node v26.12.0
+- Worker: `cd server && npx wrangler dev --port 8791 --local --persist-to /tmp/iit-bot-wrangler`
+  (listens on 127.0.0.1:8791 and [::1]:8791 through workerd).
+- Bot: `node scripts/bot-player.mjs --token <fresh 64-hex, not printed> --backend http://127.0.0.1:8791
+  --name Ben --color #2563eb --id bot-ben --first 8 --every 7 --max 2 --rounds 1`
+- Ana: a scripted second player, not committed. It uses the driver's own src/driver/remote-host.ts with the same
+  token, as /tmp/iit-e2e/e2e.mjs does. Ana waits for Ben to be listed, starts one level-1 round, claims target 0
+  (ok), waits until Ben's first claim has landed, then claims target 0 again (taken), and checks the round's end.
+- Lines tagged [ana] are Ana's. Every other line is the bot's. Both processes append to one file, so the lines
+  are in the order they happened.
+
+Main run: the bot claims, and a claim on Ana's find answers taken
+
+17:08:48.330 [ana] joining room 58b58b68 at http://127.0.0.1:8791
+17:08:48.331 joining room 58b58b68 as Ben (bot-ben) at http://127.0.0.1:8791: claims at 8 s, then every 7 s, at most 2 per round
+17:08:48.362 snapshot r1: no round yet. league: Ben 0 finds, 0 rounds won
+17:08:48.365 snapshot r2: no round yet. league: Ben 0 finds, 0 rounds won; Ana 0 finds, 0 rounds won
+17:08:48.366 [ana] Ben is listed in the league
+17:08:48.366 [ana] sends round.start (ana-0)
+17:08:48.369 snapshot r3: live d2965a42, 0 of 3 found. league: Ben 0 finds, 0 rounds won; Ana 0 finds, 0 rounds won
+17:08:48.369 [ana] PASS round.start answered ok
+17:08:48.369 taunt: ซ่อนไว้แล้ว หาให้เจอนะ!
+17:08:48.369 [ana] round d2965a42 is live with 3 targets, 60000 ms long
+17:08:48.369 [ana] PASS level 1 plays 3 targets
+17:08:48.369 [ana] sends find.claim d2965a42-3e3b-48ca-96ca-a994538a2e93:0 (ana-1)
+17:08:48.372 snapshot r4: live d2965a42, 1 of 3 found (Ana 1). league: Ben 0 finds, 0 rounds won; Ana 1 find, 0 rounds won
+17:08:48.372 taunt: ตาไวมาก!
+17:08:48.372 [ana] PASS Ana claims d2965a42-3e3b-48ca-96ca-a994538a2e93:0: ok
+17:08:56.371 snapshot r5: live d2965a42, 2 of 3 found (Ana 1, Ben 1). league: Ben 1 find, 0 rounds won; Ana 1 find, 0 rounds won
+17:08:56.371 taunt: Nothing gets past you.
+17:08:56.371 [ana] Ben's first claim has landed; d2965a42-3e3b-48ca-96ca-a994538a2e93:0 is Ana's, so Ben went to another target
+17:08:56.371 claim d2965a42-3e3b-48ca-96ca-a994538a2e93:1 -> ok (r5)
+17:08:56.371 [ana] sends find.claim d2965a42-3e3b-48ca-96ca-a994538a2e93:0 (ana-2)
+17:08:56.373 [ana] PASS a claim on d2965a42-3e3b-48ca-96ca-a994538a2e93:0, which Ana already found, answers taken
+17:09:03.370 snapshot r6: ended (all-found) d2965a42, 3 of 3 found (Ben 2, Ana 1). league: Ben 2 finds, 1 round won; Ana 1 find, 0 rounds won
+17:09:03.370 [ana] round ended: all-found, 3 of 3 found
+17:09:03.370 [ana] PASS the round ends all-found once Ben has its two
+17:09:03.370 taunt: Clean sweep. The next one is meaner.
+17:09:03.370 [ana] PASS Ben's league entry shows one round won
+17:09:03.370 [ana] PASS the next round plays at level 2
+17:09:03.370 claim d2965a42-3e3b-48ca-96ca-a994538a2e93:2 -> ok (r6)
+17:09:03.370 [ana] Ana closed her connection
+17:09:03.370 1 round ended; leaving the room
+[run] ana exit 0, bot exit 0
+
+Main run result: the bot's two claims were answered ok (r5 for target 1, r6 for target 2) and the bot left after
+its one round, with exit 0. Ana's claim on her own find (target 0) was answered taken. The round ended all-found.
+The bot never claims a found target: it skips them from the newest snapshot, so a taken answer for the bot
+only happens in a race, where its snapshot lags a find by one broadcast.
+
+Fault and signal checks, same local Worker, each a separate run with its own fresh token
+
+1. SIGINT while joined (exit 0):
+   17:10:28.557 joining room 9dee751c as Ben (bot-ben) at http://127.0.0.1:8791: claims at 8 s, then every 7 s, at most 2 per round
+   17:10:28.586 snapshot r1: no round yet. league: Ben 0 finds, 0 rounds won
+   17:10:31.446 stopped by SIGINT
+   bot exit status after SIGINT: 0
+
+2. SIGTERM while joined (exit 0):
+   17:09:44.528 joining room b814f4a8 as Ben (bot-ben) at http://127.0.0.1:8791: claims at 8 s, then every 7 s, at most 2 per round
+   17:09:44.553 snapshot r1: no round yet. league: Ben 0 finds, 0 rounds won
+   17:09:47.420 stopped by SIGTERM
+   bot exit status after SIGTERM: 0
+
+3. A full league: 256 listed players were added first (fill), then the bot joined (exit 1):
+   17:09:58.290 joining room 2aea870c as Ben (bot-ben) at http://127.0.0.1:8791: claims at 8 s, then every 7 s, at most 2 per round
+   [iit] room refused this player (full); not reconnecting
+   17:09:58.314 stopped: the room's league is full, and a full league never frees a place
+   bot exit status with a full league: 1
+
+Not exercised end to end: the auth and version faults. The CLI derives the room id from the token itself, so the
+room cannot refuse its hello with auth. Both go through the same receive → finish(1, …) path as full.
+
+Teardown: wrangler was stopped, and its workerd listener went with it. After the stop, lsof finds nothing on port
+8791 and curl to http://127.0.0.1:8791/ is refused.
