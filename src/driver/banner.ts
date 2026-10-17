@@ -42,13 +42,13 @@ export type BannerModel = { nextLevel: number; scoreboard: ScoreRow[]; gotFirst:
 );
 
 const px = (n: number): [number, "px"] => [n, "px"];
+const text = (child: string, size: number, color: string, fontWeight: "normal" | "medium" | "semibold" | "bold" = "normal"): DomElementSchema => ({
+    type: "text",
+    child,
+    styles: { fontSize: px(size), color, fontWeight },
+});
 
 export function bannerSchema(model: BannerModel, styling: ModuleStyling): DomElementSchema {
-    const text = (child: string, size: number, color: string, fontWeight: "normal" | "medium" | "semibold" | "bold" = "normal"): DomElementSchema => ({
-        type: "text",
-        child,
-        styles: { fontSize: px(size), color, fontWeight },
-    });
     const button = (domId: string, label: string, primary: boolean): DomElementSchema => ({
         type: "button",
         domId,
@@ -102,9 +102,9 @@ export function bannerSchema(model: BannerModel, styling: ModuleStyling): DomEle
                 row([text(clock(model.secondsLeft), 16, urgent ? styling.destructive : styling.foreground, "bold"), smallStop], 8)
             );
             body.push(text(`หาของที่ซ่อนอยู่ ${total} ชิ้น · Find ${total} hidden things`, 13, styling.foreground, "semibold"));
-            body.push(targetGrid(model.targets, styling, text));
+            body.push(targetGrid(model.targets, styling));
             body.push(text(`เจอแล้ว ${found}/${total} · Found ${found}/${total}`, 12, styling.foreground, "medium"));
-            if (model.gotFirst) body.push(text(gotFirstLine(model.gotFirst.name), 12, styling.foreground, "semibold"));
+            if (model.gotFirst) body.push(gotFirstBox(model.gotFirst, styling));
             if (model.taunt) body.push(text(model.taunt, 12, styling.mutedForeground));
             break;
         }
@@ -114,16 +114,13 @@ export function bannerSchema(model: BannerModel, styling: ModuleStyling): DomEle
             const found = model.targets.filter((t) => t.foundColor).length;
             const v = model.verdict;
             const title =
-                v.kind === "win" ? winLine(v.name, v.self)
-                : v.kind === "tie" ? TIE_LINE
-                : model.reason === "all-found" ? "เจอครบ! · All found!"
+                model.reason === "all-found" ? "เจอครบ! · All found!"
                 : model.reason === "time-up" ? "หมดเวลา! · Time's up!"
                 : "จบรอบ · Round over";
-            body.push(text(title, 15, styling.foreground, "bold"));
-            if (v.kind !== "plain") body.push(text(scoreLine(v.score), 13, styling.foreground, "semibold"));
-            body.push(targetGrid(model.targets, styling, text));
+            body.push(v.kind === "plain" ? text(title, 15, styling.foreground, "bold") : verdictCard(v, styling));
+            body.push(targetGrid(model.targets, styling));
             body.push(text(`เจอ ${found}/${total} · Found ${found}/${total}`, 12, styling.foreground, "medium"));
-            if (model.gotFirst) body.push(text(gotFirstLine(model.gotFirst.name), 12, styling.foreground, "semibold"));
+            if (model.gotFirst) body.push(gotFirstBox(model.gotFirst, styling));
             if (model.taunt) body.push(text(model.taunt, 12, styling.mutedForeground));
             const next = `รอบต่อไป · Next round (Lv ${model.nextLevel})`;
             body.push(...frameProblem(model.frameProblem));
@@ -131,14 +128,8 @@ export function bannerSchema(model: BannerModel, styling: ModuleStyling): DomEle
             break;
         }
     }
-    // A placeholder layout: the contract is only that each of these strings is one whole text node.
-    if (model.scoreboard.length > 1) {
-        for (const e of model.scoreboard) {
-            const cells = [text(rowName(e.name, e.leader), 12, styling.foreground, "semibold"), text(String(e.finds), 12, styling.foreground, "bold")];
-            if (e.roundsWon > 0) cells.push(text(roundsWonLine(e.roundsWon), 11, styling.mutedForeground));
-            body.push(row(cells, 8));
-        }
-    }
+    // The board is for a round or a hunt in progress, not for a connection or a full room.
+    const board = model.phase !== "connecting" && model.phase !== "full" && model.scoreboard.length > 1 ? scoreboard(model.scoreboard, styling) : null;
 
     return {
         type: "column",
@@ -156,16 +147,13 @@ export function bannerSchema(model: BannerModel, styling: ModuleStyling): DomEle
         },
         children: [
             { type: "row", styles: { mainAxisAlignment: "between", crossAxisAlignment: "center" }, children: header },
+            ...(board ? [board] : []),
             ...body,
         ],
     };
 }
 
-function targetGrid(
-    targets: BannerTarget[],
-    styling: ModuleStyling,
-    text: (child: string, size: number, color: string, weight?: "normal" | "medium" | "semibold" | "bold") => DomElementSchema
-): DomElementSchema {
+function targetGrid(targets: BannerTarget[], styling: ModuleStyling): DomElementSchema {
     return {
         type: "grid",
         styles: { columns: 2, gap: 6 },
@@ -181,6 +169,60 @@ function targetGrid(
                 ),
             ],
         })),
+    };
+}
+
+/** The most scoreboard rows drawn; the rest are counted in a "+N" line. */
+const BOARD_ROWS = 4;
+
+/** A block in a player's colour with white text, or the surface with normal text when the colour is blank. */
+function fill(color: string, styling: ModuleStyling): { backgroundColor: string; color: string } {
+    return color ? { backgroundColor: color, color: "#ffffff" } : { backgroundColor: styling.surface2, color: styling.foreground };
+}
+
+/** The round's winner, or the tie, with the score under the headline. */
+function verdictCard(v: Exclude<RoundVerdict, { kind: "plain" }>, styling: ModuleStyling): DomElementSchema {
+    const { backgroundColor, color } = v.kind === "win" ? fill(v.color, styling) : fill("", styling);
+    const headline = v.kind === "win" ? winLine(v.name, v.self) : TIE_LINE;
+    return {
+        type: "column",
+        styles: { backgroundColor, borderRadius: px(8), padding: px(8), gap: 2 },
+        children: [text(headline, 15, color, "bold"), text(scoreLine(v.score), 13, color, "semibold")],
+    };
+}
+
+function gotFirstBox(rival: GotFirst, styling: ModuleStyling): DomElementSchema {
+    const { backgroundColor, color } = fill(rival.color, styling);
+    return { type: "box", styles: { backgroundColor, borderRadius: px(6), padding: px(4) }, children: [text(gotFirstLine(rival.name), 12, color, "semibold")] };
+}
+
+function scoreboard(rows: ScoreRow[], styling: ModuleStyling): DomElementSchema {
+    const shown = rows.slice(0, BOARD_ROWS);
+    const more = rows.length - shown.length;
+    return {
+        type: "column",
+        styles: { gap: 4 },
+        children: [...shown.map((e) => scoreRow(e, styling)), ...(more > 0 ? [text(`+${more}`, 11, styling.mutedForeground, "medium")] : [])],
+    };
+}
+
+function scoreRow(e: ScoreRow, styling: ModuleStyling): DomElementSchema {
+    const swatch: DomElementSchema = {
+        type: "box",
+        styles: { width: px(12), height: px(12), borderRadius: px(6), backgroundColor: e.color || styling.surface2 },
+    };
+    const name = text(rowName(e.name, e.leader), 13, styling.foreground, e.self ? "bold" : "medium");
+    const won = e.roundsWon > 0 ? [text(roundsWonLine(e.roundsWon), 11, styling.mutedForeground, "medium")] : [];
+    return {
+        type: "row",
+        styles: {
+            mainAxisAlignment: "between",
+            crossAxisAlignment: "center",
+            backgroundColor: e.self ? styling.surface2 : styling.surface,
+            borderRadius: px(6),
+            padding: px(4),
+        },
+        children: [row([swatch, name], 8), row([...won, text(String(e.finds), 16, styling.foreground, "bold")], 8)],
     };
 }
 
