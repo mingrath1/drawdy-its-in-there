@@ -94,7 +94,7 @@ function lcg(seed: number) {
     };
 }
 
-function setup(drawdy = new FakeDrawdy()) {
+function setup(drawdy = new FakeDrawdy(), backendUrl: string | null = null) {
     const overrides: { match: (request: any) => boolean; answer: (request: any) => Promise<any> }[] = [];
     const issue = (async (request: any) => {
         const i = overrides.findIndex((o) => o.match(request));
@@ -102,7 +102,7 @@ function setup(drawdy = new FakeDrawdy()) {
         const [{ answer }] = overrides.splice(i, 1);
         return answer(request);
     }) as unknown as DriverCommandIssuer;
-    const driver = createHuntDriver({ send: createSend(issue, "mingrath1.its-in-there"), generateId: drawdy.generateId, styling: STYLING });
+    const driver = createHuntDriver({ send: createSend(issue, "mingrath1.its-in-there"), generateId: drawdy.generateId, styling: STYLING, backendUrl });
     const onEvent = driver.handleEvent;
     const flush = async () => {
         for (let i = 0, stable = 0; i < 200 && stable < 3; i++) {
@@ -459,6 +459,19 @@ describe("driver", () => {
         assert.equal(frames(t.drawdy).length, 1, "the second click joins the frame the first one made");
         assert.equal(drawnTargets(t.drawdy).length, targetCount(1));
         assert.ok(bannerTexts(t.drawdy).includes("หาของที่ซ่อนอยู่ 3 ชิ้น · Find 3 hidden things"));
+    });
+
+    it("stores its backend on a new hunt frame and dials that frame's room", async () => {
+        const t = setup(new FakeDrawdy(), "https://iit.example.workers.dev");
+        scribbleBoard(t.drawdy);
+        await t.driver.activate();
+        t.drawdy.click(t.onEvent, ACTION);
+        await pump(() => sockets.length > 0);
+        const [frame] = frames(t.drawdy);
+        const meta = parseFrameMeta(frame.meta);
+        assert.ok(meta, "frame meta validates");
+        assert.equal(meta.backendUrl, "https://iit.example.workers.dev");
+        assert.equal(sockets[0].url, `wss://iit.example.workers.dev/rooms/${meta.roomId}`);
     });
 
     it("leaves at once from the connecting banner and closes the room socket", async () => {
