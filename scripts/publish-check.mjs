@@ -112,7 +112,7 @@ const leaks = (() => {
         return "";
     }
 })();
-check("No home-directory path, token or key in committed files", leaks === "", leaks || "`git grep` for home paths, GitHub and OpenAI tokens, AWS keys, private keys and `account_id` finds nothing");
+check("No home-directory path, token or key in committed files", leaks === "", leaks || "`git grep` for home paths, GitHub and OpenAI tokens, AWS keys, private keys and Cloudflare account ids finds nothing");
 
 const outDir = "dist/publish-check";
 rmSync(outDir, { recursive: true, force: true });
