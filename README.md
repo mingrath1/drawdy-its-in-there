@@ -78,13 +78,9 @@ It never edits your drawings. The targets are preview elements on each player's 
 
 ## Multiplayer
 
-### Without a backend
+This build plays online. It connects to the room backend at `https://its-in-there-room.mingrath.workers.dev`, a Cloudflare Worker with one Durable Object per hunt frame. Everyone who clicks the magnifier button with the same hunt frame in view joins one room, with one set of targets and one scoreboard. The first player to circle a target gets it.
 
-By default the extension plays offline. Each player's driver runs the whole game in-process with `LocalHost`, so each player races alone. Two players on one frame get separate rounds. An offline room lasts until the extension reloads.
-
-### With a backend
-
-The backend in `server/` is a Cloudflare Worker with one Durable Object per hunt frame. Everyone who joins one frame shares one room, one set of targets, and one scoreboard. The first player to circle a target gets it.
+### Run your own backend
 
 1. Deploy the backend:
 
@@ -93,14 +89,9 @@ The backend in `server/` is a Cloudflare Worker with one Durable Object per hunt
 	```
 
 	Wrangler prints the Worker's `https://` URL.
-2. Set `BACKEND_URL` in `src/driver/config.ts` to that URL:
-
-	```ts
-	export const BACKEND_URL: string | null = "https://its-in-there-room.<your-subdomain>.workers.dev";
-	```
-
+2. Set `BACKEND_URL` in `src/driver/config.ts` to that URL. Set it to `null` to play offline, where each player's driver runs the whole game in-process with `LocalHost` and each player races alone.
 3. Rebuild with `npm run build`, or let the dev server reload. For a private extension, commit and push the change. Drawdy builds from GitHub.
-4. Start a new hunt. Everyone on the board who clicks the magnifier button with that frame in view joins the same room.
+4. Start a new hunt.
 
 Notes:
 
