@@ -2,7 +2,7 @@
 // every snapshot, judge laser strokes, and keep a found marker on the board for each of our finds.
 // Every event runs through one queue, so handlers never interleave.
 
-import type { DriverSubscriptionEvent, ModuleStyling, SubscribedDrawdyElement } from "@drawdy/driver-protocol";
+import type { CollaborationUserPresence, DriverSubscriptionEvent, ModuleStyling, SubscribedDrawdyElement } from "@drawdy/driver-protocol";
 import type { BoardSnapshot, Find, Rect, Round, Target } from "../shared/hunt.ts";
 import { judge } from "../shared/judge.ts";
 import { PROTOCOL_VERSION, deriveRoomId, foundTag, parseFrameMeta } from "../shared/protocol.ts";
@@ -10,7 +10,7 @@ import type { FrameMeta, HuntHost, Player, Result, ServerMessage, Snapshot, Wire
 import { STAMP_PACK } from "../stamp-pack.ts";
 import type { PackStamp } from "../stamp-pack.ts";
 import { BANNER_ID, BANNER_TOP, BANNER_WIDTH, NEXT_BUTTON_ID, STOP_BUTTON_ID, bannerSchema } from "./banner.ts";
-import type { BannerModel } from "./banner.ts";
+import type { BannerModel, GotFirst } from "./banner.ts";
 import { BOARD_PROPERTIES, boardSnapshot } from "./board.ts";
 import { CommandError, log, warn } from "./command.ts";
 import type { Send } from "./command.ts";
@@ -19,6 +19,7 @@ import { createLocalHost } from "./local-host.ts";
 import { createRemoteHost } from "./remote-host.ts";
 import { FOUND_POP, foundMarker, previewLines, shifted, stampRuns } from "./render.ts";
 import type { Point } from "./render.ts";
+import { roundVerdict, scoreRows } from "./scoreboard.ts";
 
 export const ACTION_BUTTON_ID = "iit:action";
 const ACTION_BUTTON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#698cf9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.4 7.6 7.2 3.8 9.8 5.9M14.6 7.6l-.8-3.8-2.6 2.1"/><circle cx="10.5" cy="11.5" r="6"/><path d="M15 16l5 5"/></svg>`;
@@ -30,6 +31,7 @@ const REVEAL_MS = 3_000;
 const REVEAL_BLINK_MS = 250;
 const POP_SETTLE_MS = 1_200;
 const NOTICE_MS = 4_000;
+const GOT_FIRST_MS = 2_500;
 /** A hunt zone smaller than this, in canvas units, grows about its centre so stamps stay findable. */
 const MIN_ZONE = 240;
 /** The viewport zone leaves this share of the view clear on each side, so the frame is visible. */
@@ -70,6 +72,9 @@ type RoundView = {
     painted: Set<string>;
     ended: boolean;
     reveal: ReturnType<typeof setInterval> | null;
+    /** Targets a rival may have beaten us to: "waiting" for the snapshot that names the finder, "told" once one did. */
+    beaten: Map<string, "waiting" | "told">;
+    gotFirst: { line: GotFirst; timer: ReturnType<typeof setTimeout> } | null;
 };
 
 type Played = Extract<WireRound, { status: "live" | "ended" }>;
@@ -81,6 +86,8 @@ type Hunt = {
     frameId: string;
     meta: FrameMeta;
     me: Player;
+    /** Everyone on the board, from Drawdy presence. Null when presence is unavailable and we play as a guest. */
+    presence: Player[] | null;
     host: HuntHost;
     snapshot: Snapshot | null;
     clockSkew: number;
@@ -157,7 +164,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             throw error;
         }
 
-        const me = await whoAmI();
+        const { me, presence } = await whoIsHere();
         const banner = await bannerSpot();
         const frame = place.kind === "join" ? place : await createFrame(place.rect);
         log(
@@ -168,6 +175,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             frameId: frame.frameId,
             meta: frame.meta,
             me,
+            presence,
             host: hostFor(frame.meta),
             snapshot: null,
             clockSkew: 0,
@@ -187,7 +195,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         };
         hunt = h;
         try {
-            h.subscriptions = await subscribe(banner !== null);
+            h.subscriptions = await subscribe(banner !== null, presence !== null);
             await renderBanner(h);
         } catch (error) {
             warn("could not set up the hunt:", error instanceof Error ? error.message : error);
@@ -287,7 +295,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         return host;
     }
 
-    async function subscribe(withBanner: boolean): Promise<string[]> {
+    async function subscribe(withBanner: boolean, withPresence: boolean): Promise<string[]> {
         const ids: string[] = [];
         const add = (label: string, work: Promise<{ subscriptionId: string }>) =>
             quietly(label, work.then(({ subscriptionId }) => ids.push(subscriptionId)));
@@ -295,24 +303,27 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         await add("next button", send({ type: "subscription:dom:element-clicked", req: { domElementId: NEXT_BUTTON_ID } }));
         await add("stop button", send({ type: "subscription:dom:element-clicked", req: { domElementId: STOP_BUTTON_ID } }));
         if (withBanner) await add("theme subscription", send({ type: "subscription:dom:theme-changed" }));
+        if (withPresence) await add("presence subscription", send({ type: "subscription:collaboration:presence-changed" }));
         return ids;
     }
 
-    async function whoAmI(): Promise<Player> {
+    async function whoIsHere(): Promise<{ me: Player; presence: Player[] | null }> {
+        const guest = { playerId: guestId, name: "You", color: DEFAULT_PLAYER_COLOR };
         try {
             const { users } = await send({ type: "command:collaboration:get-all-users-in-board" });
             const self = users.find((u) => u.isSelf) ?? users[0];
-            if (self) {
-                return {
-                    playerId: clean(self.id, 128) || guestId,
-                    name: clean(self.name, 64) || "You",
-                    color: clean(self.color, 64) || DEFAULT_PLAYER_COLOR,
-                };
-            }
+            const me = self
+                ? {
+                      playerId: clean(self.id, 128) || guestId,
+                      name: clean(self.name, 64) || "You",
+                      color: clean(self.color, 64) || DEFAULT_PLAYER_COLOR,
+                  }
+                : guest;
+            return { me, presence: onBoard(users) };
         } catch (error) {
             warn("presence unavailable; playing as You:", error instanceof Error ? error.message : error);
+            return { me: guest, presence: null };
         }
-        return { playerId: guestId, name: "You", color: DEFAULT_PLAYER_COLOR };
     }
 
     async function bannerSpot(): Promise<{ x: number; y: number } | null> {
@@ -349,11 +360,21 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         );
         await renderRound(h, current);
         if (current?.status === "ended") h.lastEnded = current;
+        const view = h.round;
+        if (view) for (const [targetId, state] of view.beaten) if (state === "waiting") beatenTo(h, view, targetId);
         await quietly("writing found markers", markFinds(h, message));
         if (h.startOnOpen) {
             h.startOnOpen = false;
             if (!isRunning(current)) await requestRound(h);
         }
+        await renderBanner(h);
+    }
+
+    /** Presence fires on every cursor move. Only who is on the board, and their names and colours, change the banner. */
+    async function onPresence(h: Hunt, users: readonly CollaborationUserPresence[]) {
+        const presence = onBoard(users);
+        if (presenceKey(presence) === presenceKey(h.presence)) return;
+        h.presence = presence;
         await renderBanner(h);
     }
 
@@ -434,6 +455,8 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             painted: new Set(),
             ended: false,
             reveal: null,
+            beaten: new Map(),
+            gotFirst: null,
         };
         for (const planted of round.targets) {
             const stamp = stamps.get(planted.stampId);
@@ -550,6 +573,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         h.round = null;
         stopTicker(h);
         if (view?.reveal) clearInterval(view.reveal);
+        if (view?.gotFirst) clearTimeout(view.gotFirst.timer);
         await quietly("restoring the tool", restoreTool(h));
         const previewIds = view ? [...view.targets.values()].flatMap((tv) => (tv.drawn ? [tv.drawn.previewId] : [])) : [];
         if (previewIds.length > 0) {
@@ -575,11 +599,14 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         if (fresh.length === 0 || !view || view.ended || current?.status !== "live" || current.id !== view.id) return;
 
         const taken = new Set(current.finds.map((f) => f.targetId));
+        const rivals = new Set(current.finds.filter((f) => f.playerId !== h.snapshot?.self).map((f) => f.targetId));
         for (const claim of h.claims.values()) if (claim.roundId === view.id) taken.add(claim.targetId);
+        let beaten = false;
         for (const stroke of fresh) {
-            const hits = [...view.targets.values()].filter(
-                (tv) => tv.drawn !== null && !taken.has(tv.planted.id) && judge({ points: stroke }, shifted(tv.planted, tv.drawn.at))
+            const circled = [...view.targets.values()].filter(
+                (tv) => tv.drawn !== null && judge({ points: stroke }, shifted(tv.planted, tv.drawn.at))
             );
+            const hits = circled.filter((tv) => !taken.has(tv.planted.id));
             log(`laser stroke of ${stroke.length} points: ${hits.length > 0 ? `hit ${hits.map((tv) => tv.planted.id).join(", ")}` : "miss"}`);
             for (const tv of hits) {
                 taken.add(tv.planted.id);
@@ -588,7 +615,9 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
                     h.claims.set(requestId, { roundId: view.id, targetId: tv.planted.id });
                 }
             }
+            for (const tv of circled) if (rivals.has(tv.planted.id) && beatenTo(h, view, tv.planted.id)) beaten = true;
         }
+        if (beaten) await renderBanner(h);
         // Only after judging, so a stroke counts against where the targets showed while it was drawn.
         await quietly("following the hunt frame", followFrame(h, view));
     }
@@ -602,6 +631,37 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
         }
         h.claims.delete(result.requestId);
         log(`claim on ${claim.targetId} answered ${result.code}`);
+        const view = h.round;
+        if (result.code === "taken" && view?.id === claim.roundId && beatenTo(h, view, claim.targetId)) await renderBanner(h);
+    }
+
+    /**
+     * Shows who beat us to a target we went for, once per target, while its round is live. A claim answered
+     * "taken" can arrive before the snapshot naming the finder, so it waits for that snapshot. A find of ours,
+     * from this tab or another, shows nothing. Says whether the banner needs drawing.
+     */
+    function beatenTo(h: Hunt, view: RoundView, targetId: string): boolean {
+        const current = h.snapshot?.room.current;
+        if (current?.status !== "live" || current.id !== view.id || view.beaten.get(targetId) === "told") return false;
+        const find = current.finds.find((f) => f.targetId === targetId);
+        view.beaten.set(targetId, find ? "told" : "waiting");
+        if (!find || find.playerId === h.snapshot?.self) return false;
+        log(`${find.playerName} found ${targetId} first`);
+        if (view.gotFirst) clearTimeout(view.gotFirst.timer);
+        const shown = {
+            line: { name: find.playerName, color: find.playerColor },
+            timer: setTimeout(
+                () =>
+                    enqueue("clearing got first", async () => {
+                        if (h.round !== view || view.gotFirst !== shown) return;
+                        view.gotFirst = null;
+                        await renderBanner(h);
+                    }),
+                GOT_FIRST_MS
+            ),
+        };
+        view.gotFirst = shown;
+        return true;
     }
 
     /**
@@ -706,9 +766,10 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
     function bannerModel(h: Hunt): BannerModel {
         const s = h.snapshot;
         const nextLevel = s?.room.nextDifficulty ?? 1;
-        const scoreboard = (s?.room.league ?? []).map((e) => ({ name: e.playerName, color: "", finds: e.finds, roundsWon: e.roundsWon, leader: false, self: e.playerId === s?.self }));
-        const gotFirst = null;
         const round = s?.room.current ?? null;
+        const finds = round?.status === "live" || round?.status === "ended" ? round.finds : [];
+        const scoreboard = s ? scoreRows(s.self, s.room.league, h.presence, finds) : [];
+        const gotFirst = h.round?.gotFirst?.line ?? null;
         if (!s) return { nextLevel, scoreboard, gotFirst, phase: "connecting" };
         if (!round) return { nextLevel, scoreboard, gotFirst, phase: "idle", frameProblem: h.frameProblem };
         if (round.status === "planting" || round.status === "ready") return { nextLevel, scoreboard, gotFirst, phase: "hiding" };
@@ -721,7 +782,7 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
             const secondsLeft = (round.endsAt - (Date.now() + h.clockSkew)) / 1000;
             return { nextLevel, scoreboard, gotFirst, phase: "live", secondsLeft, targets, taunt: h.taunt };
         }
-        return { nextLevel, scoreboard, gotFirst, phase: "ended", reason: round.reason, targets, taunt: h.taunt, frameProblem: h.frameProblem, verdict: { kind: "plain" } };
+        return { nextLevel, scoreboard, gotFirst, phase: "ended", reason: round.reason, targets, taunt: h.taunt, frameProblem: h.frameProblem, verdict: roundVerdict(round.reason, round.finds, scoreboard) };
     }
 
     async function renderBanner(h: Hunt) {
@@ -793,6 +854,9 @@ export function createHuntDriver(ctx: DriverContext): HuntDriver {
                     ctx.styling = event.body.styling;
                     enqueue("theme", withHunt(renderBanner));
                     return;
+                case "subscription:collaboration:presence-changed":
+                    enqueue("presence", withHunt((h) => onPresence(h, event.body.users)));
+                    return;
             }
         },
         settled: () => queue,
@@ -814,6 +878,14 @@ function placedRuns(tv: TargetView, { dx, dy }: Offset): Point[][] {
 /** A trail resends every visible stroke, so a stroke is known by its ends and its length. */
 function strokeKey(stroke: readonly (readonly [number, number])[]): string {
     return `${stroke[0]}|${stroke[stroke.length - 1]}|${stroke.length}`;
+}
+
+function onBoard(users: readonly CollaborationUserPresence[]): Player[] {
+    return users.map((u) => ({ playerId: clean(u.id, 128), name: clean(u.name, 64), color: clean(u.color, 64) }));
+}
+
+function presenceKey(presence: readonly Player[] | null): string {
+    return [...new Set((presence ?? []).map((p) => JSON.stringify([p.playerId, p.name, p.color])))].sort().join();
 }
 
 function taggedIds(elements: readonly SubscribedDrawdyElement[], tag: string): string[] {

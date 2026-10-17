@@ -37,6 +37,7 @@ const PERMISSIONS = {
     "command:tools:set-active": "scene",
     "subscription:tool:laser": "scene",
     "command:collaboration:get-all-users-in-board": "collaboration",
+    "subscription:collaboration:presence-changed": "collaboration",
     "command:subscription:remove": "none",
 } as const satisfies Partial<ProtocolPermissionMap>;
 

@@ -9,6 +9,7 @@ import { activate } from "../src/index.ts";
 import { createSend } from "../src/driver/command.ts";
 import { ACTION_BUTTON_ID as ACTION, createHuntDriver } from "../src/driver/hunt.ts";
 import { NEXT_BUTTON_ID, STOP_BUTTON_ID } from "../src/driver/banner.ts";
+import { TIE_LINE, gotFirstLine, roundsWonLine, rowName, scoreLine, winLine } from "../src/driver/banner-copy.ts";
 import { parseFrameMeta, roundDurationMs, targetCount } from "../src/shared/protocol.ts";
 import { FakeDrawdy } from "./fake-drawdy.ts";
 import { FakeSocket } from "./fake-socket.ts";
@@ -188,7 +189,7 @@ const findBy = (i: number, playerId = "u-ana", playerName = "Ana", playerColor =
 });
 
 /** Joins the remote room behind the hunt frame and delivers its first snapshot. */
-async function joinRemote(t: ReturnType<typeof setup>, first: unknown, difficulty = 3) {
+async function joinRemote(t: ReturnType<typeof setup>, first: unknown, difficulty = 3, league: unknown[] = []) {
     if (!t.drawdy.elements.has("hunt-1")) t.drawdy.add({ id: "hunt-1", type: "frame", ...HUNT_FRAME, meta: { iit: REMOTE_META } });
     await t.driver.activate();
     const before = sockets.length;
@@ -199,14 +200,22 @@ async function joinRemote(t: ReturnType<typeof setup>, first: unknown, difficult
     let revision = 0;
     const room = {
         socket,
-        snapshot(current: unknown, options: { revision?: number; difficulty?: number; nextDifficulty?: number } = {}) {
+        snapshot(current: unknown, options: { revision?: number; difficulty?: number; nextDifficulty?: number; league?: unknown[] } = {}) {
             socket.deliver({
                 v: 1,
                 type: "snapshot",
                 revision: options.revision ?? ++revision,
                 serverNow: Date.now(),
                 self: "u-ana",
-                room: { roomId: "room-remote", difficulty: options.difficulty ?? difficulty, nextDifficulty: options.nextDifficulty ?? options.difficulty ?? difficulty, league: [], current, next: null, roundsPlayed: 4 },
+                room: {
+                    roomId: "room-remote",
+                    difficulty: options.difficulty ?? difficulty,
+                    nextDifficulty: options.nextDifficulty ?? options.difficulty ?? difficulty,
+                    league: options.league ?? league,
+                    current,
+                    next: null,
+                    roundsPlayed: 4,
+                },
                 taunt: "go",
             });
         },
@@ -227,6 +236,32 @@ async function joinRemote(t: ReturnType<typeof setup>, first: unknown, difficult
 const FRAME_PROBLEM = "กรอบเล็กหรือไกลเกินไป · This frame is too small or too far away";
 
 const laser = (t: ReturnType<typeof setup>, lasers: Point[][]) => t.drawdy.emit(t.onEvent, "subscription:tool:laser", { type: "laser-state-update", lasers });
+
+const entry = (playerId: string, playerName: string, roundsWon = 0) => ({ playerId, playerName, finds: 0, roundsWon });
+const LEAGUE = [entry("u-ana", "Ana", 1), entry("u-ben", "Ben"), entry("u-cat", "Cat", 2), entry("u-eve", "Eve", 3)];
+const user = (id: string, name: string, color: string) => ({ id, name, color, isHost: false, isSelf: id === "u-ana", cursorPosition: null });
+const ANA = user("u-ana", "Ana", "#ff4d4d");
+const BEN = user("u-ben", "Ben", "#16a34a");
+const CAT = user("u-cat", "Cat", "#eab308");
+const ben = (i: number) => findBy(i, "u-ben", "Ben", "#22c55e");
+const cat = (i: number) => findBy(i, "u-cat", "Cat", "#eab308");
+const presence = (t: ReturnType<typeof setup>, users: unknown[]) => t.drawdy.emit(t.onEvent, "subscription:collaboration:presence-changed", { users });
+const upserts = (drawdy: FakeDrawdy) => drawdy.commands.filter((c) => c.type === "command:dom:upsert-floating-element").length;
+
+/** The scoreboard as drawn: each row's name, then the counts drawn beside it, sorted, whatever their layout. */
+function drawnBoard(drawdy: FakeDrawdy) {
+    const names = LEAGUE.flatMap((e) => [rowName(e.playerName, false), rowName(e.playerName, true)]);
+    const rows: string[][] = [];
+    let open = false;
+    for (const text of bannerTexts(drawdy)) {
+        const name = names.includes(text);
+        const count = /^(🏆 )?\d+$/.test(text);
+        if (name) rows.push([text]);
+        else if (open && count) rows.at(-1)!.push(text);
+        open = name || (open && count);
+    }
+    return rows.map(([name, ...cells]) => [name, ...cells.sort()]);
+}
 
 describe("driver", () => {
     let warnings: unknown[][];
@@ -425,12 +460,12 @@ describe("driver", () => {
         room.snapshot(ended(live(), "all-found", [findBy(0, "u-ben", "Ben", "#22c55e"), findBy(1), findBy(2)]));
         await t.flush();
         assert.equal(drawdy.tool, "pencil");
-        assert.ok(bannerTexts(drawdy).includes("เจอครบ! · All found!"));
+        assert.ok(bannerTexts(drawdy).includes(winLine("Ana", true)), "two finds to Ben's one win the round");
 
         room.snapshot(live(), { revision: 1 });
         await t.flush();
         assert.equal(drawdy.tool, "pencil", "a stale snapshot is ignored");
-        assert.ok(bannerTexts(drawdy).includes("เจอครบ! · All found!"));
+        assert.ok(bannerTexts(drawdy).includes(winLine("Ana", true)));
         assert.deepEqual(warnings, []);
     });
 
@@ -1009,5 +1044,227 @@ describe("driver", () => {
         mock.timers.tick(1_000);
         await t.flush();
         assert.equal(upserts(), before + 1, "the countdown ticks");
+    });
+
+    it("follows presence while hunting, and redraws the scoreboard only when someone joins, leaves, or changes name or colour", async () => {
+        const t = setup();
+        t.drawdy.users = [ANA, BEN];
+        await joinRemote(t, live(), 3, LEAGUE);
+        const presenceSubscriptions = () => [...t.drawdy.subscriptions.values()].filter((s) => s.type === "subscription:collaboration:presence-changed");
+        assert.equal(presenceSubscriptions().length, 1);
+        assert.deepEqual(drawnBoard(t.drawdy), [[rowName("Ana", false), "0", roundsWonLine(1)], [rowName("Ben", false), "0"]], "Cat and Eve are not on the board");
+
+        const before = upserts(t.drawdy);
+        presence(t, [{ ...ANA, cursorPosition: { x: 5, y: 5 } }, { ...BEN, cursorPosition: { x: 9, y: 9 } }]);
+        presence(t, [BEN, ANA]);
+        await t.flush();
+        assert.equal(upserts(t.drawdy), before, "a cursor move or a reordered list draws nothing");
+
+        presence(t, [ANA, BEN, CAT]);
+        await t.flush();
+        assert.equal(upserts(t.drawdy), before + 1, "Cat joins");
+        assert.deepEqual(drawnBoard(t.drawdy).map(([name]) => name), [rowName("Cat", false), rowName("Ana", false), rowName("Ben", false)]);
+        presence(t, [ANA, BEN, { ...CAT, name: "Kat" }]);
+        await t.flush();
+        assert.equal(upserts(t.drawdy), before + 2, "Cat is renamed");
+        presence(t, [ANA, BEN, { ...CAT, name: "Kat", color: "#000000" }]);
+        await t.flush();
+        assert.equal(upserts(t.drawdy), before + 3, "Cat changes colour");
+        presence(t, [ANA, { ...CAT, name: "Kat", color: "#000000" }]);
+        await t.flush();
+        assert.equal(upserts(t.drawdy), before + 4, "Ben leaves");
+        assert.deepEqual(drawnBoard(t.drawdy).map(([name]) => name), [rowName("Cat", false), rowName("Ana", false)]);
+
+        t.drawdy.click(t.onEvent, STOP_BUTTON_ID);
+        await t.flush();
+        assert.equal(presenceSubscriptions().length, 0, "leaving unsubscribes");
+    });
+
+    it("plays as a guest when presence is unavailable, with a scoreboard of us and this round's scorers", async () => {
+        const t = setup();
+        t.drawdy.denied.add("command:collaboration:get-all-users-in-board");
+        await joinRemote(t, live("round-9", undefined, [ben(0)]), 3, LEAGUE);
+        assert.ok(![...t.drawdy.subscriptions.values()].some((s) => s.type === "subscription:collaboration:presence-changed"));
+        assert.deepEqual(drawnBoard(t.drawdy), [[rowName("Ben", true), "1"], [rowName("Ana", false), "0", roundsWonLine(1)]]);
+    });
+
+    it("orders the scoreboard by this round's finds, crowns a sole leader, and shows rounds won", async () => {
+        const t = setup();
+        t.drawdy.users = [ANA, BEN, CAT, user("u-dan", "Dan", "#0ea5e9")];
+        const eve = (i: number) => findBy(i, "u-eve", "Eve", "#a855f7");
+        const room = await joinRemote(t, live("round-9", undefined, [ben(0), eve(1)]), 3, LEAGUE);
+        assert.deepEqual(
+            drawnBoard(t.drawdy),
+            [
+                [rowName("Ben", false), "1"],
+                [rowName("Eve", false), "1", roundsWonLine(3)],
+                [rowName("Cat", false), "0", roundsWonLine(2)],
+                [rowName("Ana", false), "0", roundsWonLine(1)],
+            ],
+            "a tie crowns nobody, Eve scored though she is off the board, and Dan never joined the room"
+        );
+        room.snapshot(live("round-9", undefined, [ben(0), eve(1), ben(2)]));
+        await t.flush();
+        assert.deepEqual(drawnBoard(t.drawdy).slice(0, 2), [
+            [rowName("Ben", true), "2"],
+            [rowName("Eve", false), "1", roundsWonLine(3)],
+        ]);
+    });
+
+    it("names the winner of a round that ended, ourselves included, or calls a tie, with the score", async () => {
+        const t = setup();
+        t.drawdy.users = [ANA, BEN];
+        const room = await joinRemote(t, ended(live("round-1"), "time-up", [ben(0), ben(1), findBy(2)]), 3, LEAGUE);
+        assert.ok(bannerTexts(t.drawdy).includes(winLine("Ben", false)));
+        assert.ok(bannerTexts(t.drawdy).includes(scoreLine([2, 1])));
+        room.snapshot(ended(live("round-2"), "all-found", [findBy(0), ben(1), findBy(2)]));
+        await t.flush();
+        assert.ok(bannerTexts(t.drawdy).includes(winLine("Ana", true)));
+        assert.ok(bannerTexts(t.drawdy).includes(scoreLine([2, 1])));
+        room.snapshot(ended(live("round-3"), "time-up", [findBy(0), ben(1)]));
+        await t.flush();
+        assert.ok(bannerTexts(t.drawdy).includes(TIE_LINE));
+        assert.ok(bannerTexts(t.drawdy).includes(scoreLine([1, 1])));
+    });
+
+    it("keeps the plain headline for a cancelled round, a round nobody scored in, and a player alone on the board", async () => {
+        const t = setup();
+        t.drawdy.users = [ANA, BEN];
+        const room = await joinRemote(t, ended(live("round-1"), "cancelled", [ben(0)]), 3, LEAGUE);
+        assert.ok(bannerTexts(t.drawdy).includes("จบรอบ · Round over"));
+        assert.ok(!bannerTexts(t.drawdy).includes(winLine("Ben", false)));
+        room.snapshot(ended(live("round-2"), "time-up"));
+        await t.flush();
+        assert.ok(bannerTexts(t.drawdy).includes("หมดเวลา! · Time's up!"));
+        presence(t, [ANA]);
+        room.snapshot(ended(live("round-3"), "all-found", [findBy(0), findBy(1), findBy(2)]));
+        await t.flush();
+        assert.ok(bannerTexts(t.drawdy).includes("เจอครบ! · All found!"));
+        assert.ok(!bannerTexts(t.drawdy).includes(winLine("Ana", true)));
+    });
+
+    it("says a rival got there first when a fresh stroke circles a target they found, once per target, for 2.5 s", async () => {
+        const t = setup();
+        t.drawdy.users = [ANA, BEN];
+        const room = await joinRemote(t, live("round-9", undefined, [ben(0)]), 3, LEAGUE);
+        assert.ok(!bannerTexts(t.drawdy).includes(gotFirstLine("Ben")));
+        laser(t, [circleTarget(0)]);
+        await t.flush();
+        assert.ok(bannerTexts(t.drawdy).includes(gotFirstLine("Ben")));
+        assert.equal(room.sent("find.claim").length, 0, "a found target is not claimed");
+
+        mock.timers.tick(2_499);
+        await t.flush();
+        assert.ok(bannerTexts(t.drawdy).includes(gotFirstLine("Ben")), "it stays up through the countdown's redraws");
+        mock.timers.tick(1);
+        await t.flush();
+        assert.ok(!bannerTexts(t.drawdy).includes(gotFirstLine("Ben")), "and clears after 2.5 s");
+
+        laser(t, [circleTarget(0)]);
+        laser(t, [circleTarget(0), circleTarget(0, 1)]);
+        await t.flush();
+        assert.ok(!bannerTexts(t.drawdy).includes(gotFirstLine("Ben")), "neither the same stroke again nor a fresh one around that target says it twice");
+    });
+
+    it("shows the newest rival's find in place of an older one, for its own 2.5 s", async () => {
+        const t = setup();
+        t.drawdy.users = [ANA, BEN, CAT];
+        await joinRemote(t, live("round-9", undefined, [ben(0), cat(1)]), 3, LEAGUE);
+        laser(t, [circleTarget(0)]);
+        await t.flush();
+        mock.timers.tick(1_000);
+        await t.flush();
+        laser(t, [circleTarget(0), circleTarget(1)]);
+        await t.flush();
+        assert.ok(bannerTexts(t.drawdy).includes(gotFirstLine("Cat")));
+        assert.ok(!bannerTexts(t.drawdy).includes(gotFirstLine("Ben")));
+        mock.timers.tick(1_500);
+        await t.flush();
+        assert.ok(bannerTexts(t.drawdy).includes(gotFirstLine("Cat")), "Ben's timer does not clear Cat's line");
+        mock.timers.tick(1_000);
+        await t.flush();
+        assert.ok(!bannerTexts(t.drawdy).includes(gotFirstLine("Cat")));
+    });
+
+    it("says a rival got there first when the room answers our claim taken, before or after the snapshot that names them", async () => {
+        const t = setup();
+        t.drawdy.users = [ANA, BEN];
+        const room = await joinRemote(t, live(), 3, LEAGUE);
+        laser(t, [circleTarget(0)]);
+        await t.flush();
+        room.snapshot(live("round-9", undefined, [ben(0)]));
+        room.answer("taken");
+        await t.flush();
+        assert.ok(bannerTexts(t.drawdy).includes(gotFirstLine("Ben")), "the snapshot came first");
+
+        mock.timers.tick(2_500);
+        await t.flush();
+        laser(t, [circleTarget(0), circleTarget(1)]);
+        await t.flush();
+        room.answer("taken");
+        await t.flush();
+        assert.ok(!bannerTexts(t.drawdy).includes(gotFirstLine("Ben")), "the room has not said who took it yet");
+        room.snapshot(live("round-9", undefined, [ben(0), ben(1)]));
+        await t.flush();
+        assert.ok(bannerTexts(t.drawdy).includes(gotFirstLine("Ben")), "the answer came first");
+    });
+
+    it("says nothing when the round ends before the room names who took our target", async () => {
+        const t = setup();
+        t.drawdy.users = [ANA, BEN];
+        const room = await joinRemote(t, live(), 3, LEAGUE);
+        laser(t, [circleTarget(0)]);
+        await t.flush();
+        room.answer("taken");
+        room.snapshot(ended(live(), "time-up", [ben(0)]));
+        await t.flush();
+        assert.ok(!bannerTexts(t.drawdy).includes(gotFirstLine("Ben")));
+    });
+
+    it("never says someone got there first for a find of ours, from this tab or another", async () => {
+        const t = setup();
+        t.drawdy.users = [ANA, BEN];
+        const room = await joinRemote(t, live("round-9", undefined, [findBy(0)]), 3, LEAGUE);
+        laser(t, [circleTarget(0)]);
+        await t.flush();
+        assert.ok(!bannerTexts(t.drawdy).includes(gotFirstLine("Ana")), "a stroke around our own find");
+        laser(t, [circleTarget(0), circleTarget(1)]);
+        await t.flush();
+        room.snapshot(live("round-9", undefined, [findBy(0), findBy(1)]));
+        room.answer("taken");
+        await t.flush();
+        assert.ok(!bannerTexts(t.drawdy).includes(gotFirstLine("Ana")), "a claim another tab of ours won");
+        laser(t, [circleTarget(0), circleTarget(1), circleTarget(2)]);
+        await t.flush();
+        room.answer("taken");
+        room.snapshot(live("round-9", undefined, [findBy(0), findBy(1), findBy(2)]));
+        await t.flush();
+        assert.ok(!bannerTexts(t.drawdy).includes(gotFirstLine("Ana")), "and one the room named only after answering");
+    });
+
+    it("clears the got-first line when a new round starts, and leaves nothing running after leaving", async () => {
+        const t = setup();
+        t.drawdy.users = [ANA, BEN];
+        const room = await joinRemote(t, live("round-1", undefined, [ben(0)]), 3, LEAGUE);
+        laser(t, [circleTarget(0)]);
+        await t.flush();
+        assert.ok(bannerTexts(t.drawdy).includes(gotFirstLine("Ben")));
+        room.snapshot({ status: "planting", id: "round-2", frameRect: HUNT_FRAME });
+        await t.flush();
+        assert.ok(!bannerTexts(t.drawdy).includes(gotFirstLine("Ben")), "a new round clears it");
+
+        room.snapshot(live("round-2", undefined, [ben(0)]));
+        await t.flush();
+        laser(t, [circleTarget(0), circleTarget(0, 1)]);
+        await t.flush();
+        assert.ok(bannerTexts(t.drawdy).includes(gotFirstLine("Ben")), "the same target in the next round says it again");
+        t.drawdy.click(t.onEvent, STOP_BUTTON_ID);
+        await t.flush();
+        assert.deepEqual([...t.drawdy.subscriptions.values()].map((s) => s.req?.domElementId), [ACTION], "only the action button stays subscribed");
+        const issued = t.drawdy.commands.length;
+        mock.timers.tick(60_000);
+        await t.flush();
+        assert.equal(t.drawdy.commands.length, issued, "nothing runs after leaving");
+        assert.deepEqual(warnings, []);
     });
 });
