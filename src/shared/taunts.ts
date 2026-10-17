@@ -28,7 +28,8 @@ export function momentOf(before: Room, after: Room): TauntMoment | null {
       reason: round.reason,
       found: round.finds.length,
       total: round.targets.length,
-      outcome: roundOutcome(round.finds),
+      // As in the rules, a cancelled round has no winner.
+      outcome: roundOutcome(round.reason === "cancelled" ? [] : round.finds),
     };
   }
   if (round.status !== "live") return null;

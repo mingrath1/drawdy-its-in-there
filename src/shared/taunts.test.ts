@@ -191,3 +191,11 @@ test("the same moment always gets the same line", () => {
   const line = () => bundledTaunts(finding("r9", ben("t3", 3), "takes-lead"));
   assert.equal(line(), line());
 });
+
+test("a cancelled round's moment names no winner, as the rules award none", () => {
+  const before = room(live("r1", three, [ana("t1", 1), ana("t2", 2), ben("t3", 3)]));
+  const after = room(ended("r1", three, [ana("t1", 1), ana("t2", 2), ben("t3", 3)], "cancelled"));
+  const moment = momentOf(before, after);
+  assert.equal(moment?.kind, "round-end");
+  assert.equal(moment?.kind === "round-end" && moment.outcome.kind, "none");
+});
