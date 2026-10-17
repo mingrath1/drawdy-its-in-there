@@ -1,6 +1,6 @@
 // A test bot for the race: a second player on its own connection, so one browser can race a rival.
 // It joins by join token, claims targets on a schedule, and logs what the room answers. It is a test
-// tool, not an AI: it reads each snapshot and sends find.claim, and it never starts, cancels or
+// tool with fixed rules: it reads each snapshot and sends find.claim, and it never starts, cancels or
 // changes a round.
 // Usage: node scripts/bot-player.mjs --token <64-hex joinToken> [--backend URL] [--name Ben]
 //   [--color #2563eb] [--id bot-ben] [--first 8] [--every 7] [--max 2] [--rounds N]
@@ -108,6 +108,9 @@ export function endsSeenRound(seen, round) {
     return round.status === "ended" && was === "live";
 }
 
+/** The bot leaves once its --rounds rounds have ended and its last claim is answered, so that answer still gets logged. */
+export const mayLeave = (rounds, roundsEnded, pendingClaims) => rounds !== null && roundsEnded >= rounds && pendingClaims === 0;
+
 /** The snapshot's taunt, when its publication is newer than the last taunt logged. */
 export const newTaunt = (snapshot, lastRevision) =>
     snapshot.taunt !== null && snapshot.revision > lastRevision ? snapshot.taunt : null;
@@ -188,6 +191,12 @@ export function play(options) {
             arm();
         };
 
+        const leaveIfDone = () => {
+            if (!mayLeave(options.rounds, roundsEnded, pending.size)) return false;
+            finish(0, `${plural(roundsEnded, "round", "rounds")} ended; leaving the room`);
+            return true;
+        };
+
         const arm = () => {
             clearTimeout(timer);
             timer = null;
@@ -206,10 +215,8 @@ export function play(options) {
                 tauntRevision = snapshot.revision;
                 say(`taunt: ${taunt}`);
             }
-            if (endsSeenRound(seen, round)) {
-                roundsEnded++;
-                if (roundsEnded === options.rounds) return finish(0, `${plural(roundsEnded, "round", "rounds")} ended; leaving the room`);
-            }
+            if (endsSeenRound(seen, round)) roundsEnded++;
+            if (leaveIfDone()) return;
             arm();
         };
 
@@ -217,6 +224,7 @@ export function play(options) {
             const targetId = pending.get(result.requestId) ?? "?";
             pending.delete(result.requestId);
             say(`claim ${targetId} -> ${result.code} (r${result.revision})`);
+            leaveIfDone();
         };
 
         const receive = (message) => {

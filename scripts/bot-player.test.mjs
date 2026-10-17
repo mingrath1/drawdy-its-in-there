@@ -5,6 +5,7 @@ import { test } from "node:test";
 import {
     describeSnapshot,
     endsSeenRound,
+    mayLeave,
     nextClaimAt,
     newTaunt,
     parseArgs,
@@ -236,6 +237,14 @@ test("describeSnapshot names an ended round by its reason and says when nobody i
         "snapshot r12: ended (all-found) 1a2b3c4d, 2 of 2 found (Ana 1, Ben 1). league: nobody yet",
     );
     assert.equal(describeSnapshot(snapshotOf(null)), "snapshot r12: no round yet. league: nobody yet");
+});
+
+test("the bot leaves once its rounds have ended and its last claim is answered", () => {
+    assert.equal(mayLeave(null, 5, 0), false, "without --rounds it never leaves on its own");
+    assert.equal(mayLeave(1, 0, 0), false, "no round has ended yet");
+    assert.equal(mayLeave(1, 1, 1), false, "the last claim is still unanswered, and its result would be lost");
+    assert.equal(mayLeave(2, 1, 0), false, "one of two rounds has ended");
+    assert.equal(mayLeave(1, 1, 0), true);
 });
 
 test("newTaunt reports a taunt once, when its publication is newer than the last one logged", () => {
