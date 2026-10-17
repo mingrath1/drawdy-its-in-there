@@ -2,6 +2,7 @@
 
 import type { DomElementSchema, ModuleStyling } from "@drawdy/driver-protocol";
 import type { EndReason } from "../shared/round.ts";
+import { gotFirstLine, roundsWonLine, rowName, scoreLine, TIE_LINE, winLine } from "./banner-copy.ts";
 
 export const BANNER_ID = "iit:banner";
 export const NEXT_BUTTON_ID = "iit:next";
@@ -103,6 +104,7 @@ export function bannerSchema(model: BannerModel, styling: ModuleStyling): DomEle
             body.push(text(`หาของที่ซ่อนอยู่ ${total} ชิ้น · Find ${total} hidden things`, 13, styling.foreground, "semibold"));
             body.push(targetGrid(model.targets, styling, text));
             body.push(text(`เจอแล้ว ${found}/${total} · Found ${found}/${total}`, 12, styling.foreground, "medium"));
+            if (model.gotFirst) body.push(text(gotFirstLine(model.gotFirst.name), 12, styling.foreground, "semibold"));
             if (model.taunt) body.push(text(model.taunt, 12, styling.mutedForeground));
             break;
         }
@@ -110,11 +112,18 @@ export function bannerSchema(model: BannerModel, styling: ModuleStyling): DomEle
             interactive = true;
             const total = model.targets.length;
             const found = model.targets.filter((t) => t.foundColor).length;
+            const v = model.verdict;
             const title =
-                model.reason === "all-found" ? "เจอครบ! · All found!" : model.reason === "time-up" ? "หมดเวลา! · Time's up!" : "จบรอบ · Round over";
+                v.kind === "win" ? winLine(v.name, v.self)
+                : v.kind === "tie" ? TIE_LINE
+                : model.reason === "all-found" ? "เจอครบ! · All found!"
+                : model.reason === "time-up" ? "หมดเวลา! · Time's up!"
+                : "จบรอบ · Round over";
             body.push(text(title, 15, styling.foreground, "bold"));
+            if (v.kind !== "plain") body.push(text(scoreLine(v.score), 13, styling.foreground, "semibold"));
             body.push(targetGrid(model.targets, styling, text));
             body.push(text(`เจอ ${found}/${total} · Found ${found}/${total}`, 12, styling.foreground, "medium"));
+            if (model.gotFirst) body.push(text(gotFirstLine(model.gotFirst.name), 12, styling.foreground, "semibold"));
             if (model.taunt) body.push(text(model.taunt, 12, styling.mutedForeground));
             const next = `รอบต่อไป · Next round (Lv ${model.nextLevel})`;
             body.push(...frameProblem(model.frameProblem));
@@ -122,8 +131,13 @@ export function bannerSchema(model: BannerModel, styling: ModuleStyling): DomEle
             break;
         }
     }
+    // A placeholder layout: the contract is only that each of these strings is one whole text node.
     if (model.scoreboard.length > 1) {
-        body.push(text(model.scoreboard.map((e) => `${e.name} ${e.finds}`).join(" · "), 11, styling.mutedForeground));
+        for (const e of model.scoreboard) {
+            const cells = [text(rowName(e.name, e.leader), 12, styling.foreground, "semibold"), text(String(e.finds), 12, styling.foreground, "bold")];
+            if (e.roundsWon > 0) cells.push(text(roundsWonLine(e.roundsWon), 11, styling.mutedForeground));
+            body.push(row(cells, 8));
+        }
     }
 
     return {

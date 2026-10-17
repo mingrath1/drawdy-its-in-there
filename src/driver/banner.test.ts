@@ -82,7 +82,7 @@ describe("bannerSchema", () => {
         assert.ok(all.includes("หาของที่ซ่อนอยู่ 2 ชิ้น · Find 2 hidden things"));
         assert.ok(all.includes("เจอแล้ว 1/2 · Found 1/2"));
         assert.ok(all.includes("✓ หน้าแมว · cat face"));
-        assert.ok(all.includes("Ana 3 · Ben 1"));
+        for (const line of ["👑 Ana", "3", "🏆 2", "Ben", "1"]) assert.ok(all.includes(line), line);
     });
 
     it("ends with the outcome and offers the next round at the room's next level", () => {
@@ -92,5 +92,22 @@ describe("bannerSchema", () => {
         assert.ok(timeUp.includes("หมดเวลา! · Time's up!"));
         assert.ok(timeUp.includes("รอบต่อไป · Next round (Lv 3)"));
         assert.deepEqual(buttons(bannerSchema(models[5], STYLING)).map((b) => b.domId), [NEXT_BUTTON_ID, STOP_BUTTON_ID]);
+    });
+});
+
+describe("the competitive lines, each one whole text node", () => {
+    it("names the winner or the tie with the score, and the rival who got there first", () => {
+        const ended = models[4] as Extract<BannerModel, { phase: "ended" }>;
+        const win = texts(bannerSchema({ ...ended, verdict: { kind: "win", name: "Ben", color: "#2563eb", self: false, score: [3, 1] } }, STYLING));
+        assert.ok(win.includes("🏆 Ben ชนะรอบนี้! · Ben wins the round!") && win.includes("3–1"));
+        const tie = texts(bannerSchema({ ...ended, verdict: { kind: "tie", score: [2, 2] } }, STYLING));
+        assert.ok(tie.includes("🤝 เสมอ! · It's a tie!") && tie.includes("2–2"));
+        const live = texts(bannerSchema({ ...models[3], gotFirst: { name: "Ben", color: "#2563eb" } }, STYLING));
+        assert.ok(live.includes("Ben เจอก่อน · Ben got it first"));
+    });
+
+    it("leaves the scoreboard out with one player", () => {
+        const solo = texts(bannerSchema({ ...models[3], scoreboard: base.scoreboard.slice(0, 1) }, STYLING));
+        assert.ok(!solo.includes("👑 Ana"));
     });
 });
