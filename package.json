@@ -2,7 +2,7 @@
     "name": "its-in-there",
     "version": "0.2.0",
     "description": "It's In There! Drawdy extension.",
-    "license": "UNLICENSED",
+    "license": "MIT",
     "private": true,
     "type": "module",
     "scripts": {

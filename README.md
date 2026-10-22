@@ -148,3 +148,7 @@ node scripts/bot-player.mjs --token <the frame's 64-hex join token> --name Ben -
 
 - The backend started as a copy of [earendil-works/pi-durable-cloudflare](https://github.com/earendil-works/pi-durable-cloudflare) at commit `dcb56ce`, under the MIT License. See `server/LICENSE` and `server/NOTICE`.
 - The stamps in `src/stamp-pack.ts` are placeholder line art. They should be replaced with human-drawn stamps. `docs/stamp-sheet.png` shows them all.
+
+## License
+
+MIT. See `LICENSE`. The backend in `server/` keeps its own MIT license and notice (see Credits).
